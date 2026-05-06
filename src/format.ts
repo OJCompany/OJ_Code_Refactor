@@ -61,37 +61,3 @@ export function formatSingle(option: RefactoringOption, originalSource?: string)
   return '\n' + lines.join('\n') + '\n';
 }
 
-export function formatOptions(options: RefactoringOption[]): string {
-  const blocks = options.map((opt) => {
-    const patch = createTwoFilesPatch(
-      'before',
-      'after',
-      opt.before + '\n',
-      opt.after  + '\n',
-      '',
-      '',
-      { context: 3 }
-    );
-
-    const metricsLine =
-      opt.metricsBeforeComplexity !== undefined
-        ? `${DIM}복잡도 ${opt.metricsBeforeComplexity}→${opt.metricsAfterComplexity}  ` +
-          `라인 ${opt.metricsBeforeLines}→${opt.metricsAfterLines}  ` +
-          `중첩 ${opt.metricsBeforeDepth}→${opt.metricsAfterDepth}${RESET}`
-        : '';
-
-    return [
-      divider('═'),
-      `${BOLD}${YELLOW}[${opt.id}] ${opt.name}${RESET}`,
-      `${BOLD}요약${RESET}  ${opt.summary}`,
-      `${BOLD}트레이드오프${RESET}  ${opt.tradeoff}`,
-      metricsLine,
-      '',
-      colorDiff(patch),
-    ]
-      .filter((l) => l !== '')
-      .join('\n');
-  });
-
-  return '\n' + blocks.join('\n\n') + '\n' + divider('═') + '\n';
-}

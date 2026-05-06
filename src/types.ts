@@ -1,6 +1,6 @@
 // 두 Claude 세션의 공유 계약서 — 이 파일 기준으로 양쪽 코드가 붙음
 
-export type AnyContext = 'parameter' | 'return' | 'variable' | 'generic';
+export type AnyContext = 'parameter' | 'return' | 'variable' | 'generic' | 'assertion';
 
 export interface AnyOccurrence {
   line: number;

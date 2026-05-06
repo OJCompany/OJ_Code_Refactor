@@ -86,6 +86,20 @@ export function detect(filePath: string): DetectResult {
       });
     }
 
+    // 타입 단언의 any (x as any, <any>x)
+    else if (
+      (ts.isAsExpression(node) || ts.isTypeAssertionExpression(node)) &&
+      isAnyKeyword(node.type)
+    ) {
+      const { line, column } = getLineCol(node.type.getStart(sourceFile));
+      occurrences.push({
+        line,
+        column,
+        snippet: lines[line - 1].trim(),
+        context: 'assertion',
+      });
+    }
+
     ts.forEachChild(node, visit);
   }
 
