@@ -23,6 +23,12 @@ export interface RefactoringOption {
   before: string;        // 변경 전 코드 스니펫
   after: string;         // 변경 후 코드 스니펫
   fullCode: string;      // 파일 전체 (apply.ts에서 씀)
+  metricsBeforeComplexity?: number;
+  metricsAfterComplexity?: number;
+  metricsBeforeLines?: number;
+  metricsAfterLines?: number;
+  metricsBeforeDepth?: number;
+  metricsAfterDepth?: number;
 }
 
 export interface ApplyResult {
