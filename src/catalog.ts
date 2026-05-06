@@ -10,12 +10,12 @@ export interface AnalyzeResult {
   option: RefactoringOption;
 }
 
-export async function analyze(filePath: string): Promise<AnalyzeResult> {
+export async function analyze(filePath: string): Promise<AnalyzeResult | null> {
   const anyResult = detect(filePath);
   const nestingResult = detectNesting(filePath);
 
   if (anyResult.occurrences.length === 0 && nestingResult.occurrences.length === 0) {
-    throw new Error('리팩토링할 코드 스멜이 감지되지 않았습니다.');
+    return null;
   }
 
   if (anyResult.occurrences.length >= nestingResult.occurrences.length) {

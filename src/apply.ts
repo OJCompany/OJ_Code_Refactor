@@ -2,7 +2,8 @@ import fs from 'fs';
 import type { ApplyResult, RefactoringOption } from './types.js';
 
 export function apply(filePath: string, option: RefactoringOption): ApplyResult {
-  fs.copyFileSync(filePath, `${filePath}.bak`);
+  const bakPath = `${filePath}.${Date.now()}.bak`;
+  fs.copyFileSync(filePath, bakPath);
   fs.writeFileSync(filePath, option.fullCode, 'utf-8');
 
   return {
@@ -13,12 +14,19 @@ export function apply(filePath: string, option: RefactoringOption): ApplyResult 
 }
 
 export function rollback(filePath: string): boolean {
-  const bakPath = `${filePath}.bak`;
+  const dir = filePath.substring(0, filePath.lastIndexOf('/') + 1) || '.';
+  const base = filePath.substring(filePath.lastIndexOf('/') + 1);
 
-  if (!fs.existsSync(bakPath)) return false;
+  const bakFiles = fs.readdirSync(dir)
+    .filter((f) => f.startsWith(base + '.') && f.endsWith('.bak'))
+    .sort()
+    .reverse();
 
-  fs.copyFileSync(bakPath, filePath);
-  fs.unlinkSync(bakPath);
+  if (bakFiles.length === 0) return false;
+
+  const latest = `${dir}${bakFiles[0]}`;
+  fs.copyFileSync(latest, filePath);
+  fs.unlinkSync(latest);
 
   return true;
 }

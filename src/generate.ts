@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import ts from 'typescript';
 import type { DetectResult, RefactoringOption } from './types.js';
 import type { NestingDetectResult } from './detectNesting.js';
 import { measureComplexity } from './metrics.js';
@@ -32,6 +33,19 @@ Move all precondition checks to the top of the function as early returns.
 The happy path should be at the lowest indentation level.
 Do NOT change runtime logic — only restructure the control flow.`,
 };
+
+function validateLLMOutput(fullCode: string, originalSource: string): void {
+  try {
+    ts.createSourceFile('validate.ts', fullCode, ts.ScriptTarget.Latest, true);
+  } catch {
+    throw new Error('LLM 출력이 유효한 TypeScript가 아닙니다.');
+  }
+
+  const ratio = fullCode.length / originalSource.length;
+  if (ratio < 0.5) {
+    throw new Error(`LLM 출력이 원본 대비 너무 짧습니다 (${Math.round(ratio * 100)}%).`);
+  }
+}
 
 function stripMarkdownFences(text: string): string {
   return text.replace(/^```(?:typescript|ts)?\n?/m, '').replace(/\n?```$/m, '').trim();
@@ -79,8 +93,11 @@ async function callLLM(
     messages: [{ role: 'user', content: prompt }],
   });
 
-  const raw = (message.content[0] as { type: string; text: string }).text.trim();
-  const fullCode = stripMarkdownFences(raw);
+  const textBlock = message.content.find((b): b is { type: 'text'; text: string } => b.type === 'text');
+  if (!textBlock) throw new Error('LLM 응답에 텍스트 블록이 없습니다.');
+
+  const fullCode = stripMarkdownFences(textBlock.text.trim());
+  validateLLMOutput(fullCode, sourceCode);
   const afterSnippet = fullCode.split('\n').slice(0, 5).join('\n');
 
   const before = measureComplexity(sourceCode);
