@@ -1,7 +1,7 @@
 import ts from 'typescript';
 import fs from 'fs';
 import path from 'path';
-import type { AnyContext, AnyOccurrence, DetectResult } from './types.js';
+import type { AnyOccurrence, DetectResult } from './types.js';
 
 export function detect(filePath: string): DetectResult {
   const absolutePath = path.resolve(filePath);
@@ -83,6 +83,17 @@ export function detect(filePath: string): DetectResult {
             context: 'generic',
           });
         }
+      });
+    }
+
+    // 타입 단언의 any (foo as any)
+    else if (ts.isAsExpression(node) && isAnyKeyword(node.type)) {
+      const { line, column } = getLineCol(node.type.getStart(sourceFile));
+      occurrences.push({
+        line,
+        column,
+        snippet: lines[line - 1].trim(),
+        context: 'assertion',
       });
     }
 

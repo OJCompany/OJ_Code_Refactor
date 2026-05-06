@@ -11,3 +11,14 @@ export function apply(filePath: string, option: RefactoringOption): ApplyResult 
     chosenOption: option,
   };
 }
+
+export function rollback(filePath: string): boolean {
+  const bakPath = `${filePath}.bak`;
+
+  if (!fs.existsSync(bakPath)) return false;
+
+  fs.copyFileSync(bakPath, filePath);
+  fs.unlinkSync(bakPath);
+
+  return true;
+}

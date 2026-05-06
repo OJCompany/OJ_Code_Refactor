@@ -1,14 +1,13 @@
 import { detect } from './detect.js';
 import { detectNesting } from './detectNesting.js';
 import { generate, generateGuardClauses } from './generate.js';
-import { apply } from './apply.js';
-import type { RefactoringOption, ApplyResult } from './types.js';
+import type { RefactoringOption } from './types.js';
 
 export interface AnalyzeResult {
   catalog: 'replace-any' | 'guard-clauses';
   filePath: string;
   issueCount: number;
-  options: RefactoringOption[];
+  option: RefactoringOption;
 }
 
 export async function analyze(filePath: string): Promise<AnalyzeResult> {
@@ -20,22 +19,22 @@ export async function analyze(filePath: string): Promise<AnalyzeResult> {
   }
 
   if (anyResult.occurrences.length >= nestingResult.occurrences.length) {
-    const options = await generate(anyResult);
+    const option = await generate(anyResult);
     return {
       catalog: 'replace-any',
       filePath,
       issueCount: anyResult.occurrences.length,
-      options,
+      option,
     };
   } else {
-    const options = await generateGuardClauses(nestingResult);
+    const option = await generateGuardClauses(nestingResult);
     return {
       catalog: 'guard-clauses',
       filePath,
       issueCount: nestingResult.occurrences.length,
-      options,
+      option,
     };
   }
 }
 
-export { apply };
+export { apply, rollback } from './apply.js';
