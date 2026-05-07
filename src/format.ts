@@ -9,31 +9,35 @@ const G  = '\x1b[32m';
 const Y  = '\x1b[33m';
 const W  = '\x1b[97m';
 
-const W60 = 60;
+const SEP = D + '─'.repeat(60) + R;
 
-function line(char = '─'): string {
-  return D + char.repeat(W60) + R;
+function delta(before: number, after: number): string {
+  const d = after - before;
+  if (d < 0) return G + `↓${Math.abs(d)}` + R;
+  if (d > 0) return Y + `↑${d}` + R;
+  return D + '─' + R;
 }
 
-function metricCell(label: string, before: number, after: number): string {
-  const delta = after - before;
-  const arrow = delta < 0 ? G + `↓${Math.abs(delta)}` + R
-              : delta > 0 ? Y + `↑${delta}` + R
-              : D + '━' + R;
-  return `${D}${label}${R}  ${W}${before}${R} ${D}→${R} ${W}${after}${R} ${arrow}`;
+function metric(label: string, before: number, after: number): string {
+  return `${D}${label}${R} ${W}${before}→${after}${R} ${delta(before, after)}`;
 }
 
-function colorDiff(patch: string): string {
-  return patch
-    .split('\n')
-    .slice(2)
-    .map((l) => {
-      if (l.startsWith('@@'))  return '\n' + D + l + R;
-      if (l.startsWith('+'))   return G + l + R;
-      if (l.startsWith('-'))   return R2 + l + R;
-      return D + l + R;
-    })
-    .join('\n');
+function cleanDiff(patch: string): string {
+  const lines = patch.split('\n').slice(4); // skip Index/===/---/+++ headers
+  const out: string[] = [];
+
+  for (const l of lines) {
+    if (!l) continue;
+    if (l.startsWith('@@'))  { out.push(''); out.push(D + '  ···' + R); continue; }
+    if (l.startsWith('+'))   { out.push(G + l + R); continue; }
+    if (l.startsWith('-'))   { out.push(R2 + l + R); continue; }
+    out.push(D + l + R);
+  }
+
+  // trim leading blank/···
+  while (out.length && (!out[0] || out[0] === D + '  ···' + R)) out.shift();
+
+  return out.join('\n');
 }
 
 export function formatSingle(option: RefactoringOption, originalSource?: string): string {
@@ -44,30 +48,33 @@ export function formatSingle(option: RefactoringOption, originalSource?: string)
     'before', 'after',
     beforeSrc.endsWith('\n') ? beforeSrc : beforeSrc + '\n',
     afterSrc.endsWith('\n')  ? afterSrc  : afterSrc  + '\n',
-    '', '', { context: 2 }
+    '', '', { context: 1 }
   );
 
   const hasMetrics = option.metricsBeforeComplexity !== undefined;
 
   const parts: string[] = [
     '',
-    line('─'),
-    `  ${B}${Y}${option.name}${R}  ${D}·${R}  ${option.summary}`,
+    SEP,
+    `  ${B}${Y}${option.name}${R}  ${D}·  ${option.summary}${R}`,
   ];
 
   if (hasMetrics) {
-    parts.push('');
     parts.push(
-      '  ' + metricCell('복잡도', option.metricsBeforeComplexity!, option.metricsAfterComplexity!) +
-      '   ' + metricCell('라인', option.metricsBeforeLines!, option.metricsAfterLines!) +
-      '   ' + metricCell('중첩', option.metricsBeforeDepth!, option.metricsAfterDepth!)
+      '  ' +
+      metric('복잡도', option.metricsBeforeComplexity!, option.metricsAfterComplexity!) +
+      '    ' +
+      metric('라인', option.metricsBeforeLines!, option.metricsAfterLines!) +
+      '    ' +
+      metric('중첩', option.metricsBeforeDepth!, option.metricsAfterDepth!)
     );
   }
 
+  parts.push(SEP);
   parts.push('');
-  parts.push(line('─'));
-  parts.push(colorDiff(patch));
-  parts.push(line('─'));
+  parts.push(cleanDiff(patch));
+  parts.push('');
+  parts.push(SEP);
   parts.push('');
 
   return parts.join('\n') + '\n';

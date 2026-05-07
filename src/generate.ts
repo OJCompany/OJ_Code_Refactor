@@ -25,7 +25,9 @@ Rules (follow strictly):
 2. For structured objects, define a named interface or type alias (e.g. User, ApiResponse).
 3. For truly dynamic values use 'unknown' with a type guard at the use site.
 4. Do NOT rename variables, restructure logic, add comments, or change runtime behavior.
-5. Keep the diff as small as possible — change ONLY type annotations.`,
+5. Keep the diff as small as possible — change ONLY type annotations.
+6. NEVER add or remove runtime expressions: no ??, ?., ||, &&, ternaries, or any other logic that wasn't in the original.
+7. If a type mismatch requires a workaround, use a type assertion (e.g. value as string) — never add null-handling logic.`,
 };
 
 const GUARD_CLAUSES_STRATEGY: Strategy = {
