@@ -1,29 +1,39 @@
 import { createTwoFilesPatch } from 'diff';
 import type { RefactoringOption } from './types.js';
 
-const RESET  = '\x1b[0m';
-const BOLD   = '\x1b[1m';
-const DIM    = '\x1b[2m';
-const RED    = '\x1b[31m';
-const GREEN  = '\x1b[32m';
-const YELLOW = '\x1b[33m';
-const CYAN   = '\x1b[36m';
+const R  = '\x1b[0m';
+const B  = '\x1b[1m';
+const D  = '\x1b[2m';
+const R2 = '\x1b[31m';
+const G  = '\x1b[32m';
+const Y  = '\x1b[33m';
+const W  = '\x1b[97m';
+
+const W60 = 60;
+
+function line(char = '─'): string {
+  return D + char.repeat(W60) + R;
+}
+
+function metricCell(label: string, before: number, after: number): string {
+  const delta = after - before;
+  const arrow = delta < 0 ? G + `↓${Math.abs(delta)}` + R
+              : delta > 0 ? Y + `↑${delta}` + R
+              : D + '━' + R;
+  return `${D}${label}${R}  ${W}${before}${R} ${D}→${R} ${W}${after}${R} ${arrow}`;
+}
 
 function colorDiff(patch: string): string {
   return patch
     .split('\n')
-    .map((line) => {
-      if (line.startsWith('+++') || line.startsWith('---')) return DIM + line + RESET;
-      if (line.startsWith('@@'))  return CYAN + line + RESET;
-      if (line.startsWith('+'))   return GREEN + line + RESET;
-      if (line.startsWith('-'))   return RED + line + RESET;
-      return line;
+    .slice(2)
+    .map((l) => {
+      if (l.startsWith('@@'))  return '\n' + D + l + R;
+      if (l.startsWith('+'))   return G + l + R;
+      if (l.startsWith('-'))   return R2 + l + R;
+      return D + l + R;
     })
     .join('\n');
-}
-
-function divider(char = '─', width = 60): string {
-  return DIM + char.repeat(width) + RESET;
 }
 
 export function formatSingle(option: RefactoringOption, originalSource?: string): string {
@@ -31,33 +41,34 @@ export function formatSingle(option: RefactoringOption, originalSource?: string)
   const afterSrc  = option.fullCode || option.after;
 
   const patch = createTwoFilesPatch(
-    'before',
-    'after',
+    'before', 'after',
     beforeSrc.endsWith('\n') ? beforeSrc : beforeSrc + '\n',
     afterSrc.endsWith('\n')  ? afterSrc  : afterSrc  + '\n',
-    '',
-    '',
-    { context: 3 }
+    '', '', { context: 2 }
   );
 
-  const metricsLine =
-    option.metricsBeforeComplexity !== undefined
-      ? `${DIM}복잡도 ${option.metricsBeforeComplexity}→${option.metricsAfterComplexity}  ` +
-        `라인 ${option.metricsBeforeLines}→${option.metricsAfterLines}  ` +
-        `중첩 ${option.metricsBeforeDepth}→${option.metricsAfterDepth}${RESET}`
-      : '';
+  const hasMetrics = option.metricsBeforeComplexity !== undefined;
 
-  const lines = [
-    divider('═'),
-    `${BOLD}${YELLOW}Tidy 리팩토링 결과${RESET}`,
-    `${BOLD}요약${RESET}  ${option.summary}`,
-    `${BOLD}트레이드오프${RESET}  ${option.tradeoff}`,
-    metricsLine,
+  const parts: string[] = [
     '',
-    colorDiff(patch),
-    divider('═'),
-  ].filter((l) => l !== '');
+    line('─'),
+    `  ${B}${Y}${option.name}${R}  ${D}·${R}  ${option.summary}`,
+  ];
 
-  return '\n' + lines.join('\n') + '\n';
+  if (hasMetrics) {
+    parts.push('');
+    parts.push(
+      '  ' + metricCell('복잡도', option.metricsBeforeComplexity!, option.metricsAfterComplexity!) +
+      '   ' + metricCell('라인', option.metricsBeforeLines!, option.metricsAfterLines!) +
+      '   ' + metricCell('중첩', option.metricsBeforeDepth!, option.metricsAfterDepth!)
+    );
+  }
+
+  parts.push('');
+  parts.push(line('─'));
+  parts.push(colorDiff(patch));
+  parts.push(line('─'));
+  parts.push('');
+
+  return parts.join('\n') + '\n';
 }
-
