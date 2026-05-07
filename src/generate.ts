@@ -15,40 +15,49 @@ interface Strategy {
   instruction: string;
 }
 
-const REPLACE_ANY_STRATEGY: Strategy = {
-  id: 1,
-  name: 'unknown으로 교체',
-  tradeoff: '타입 안전성 즉시 확보. 사용 전 타입 가드 필요.',
-  instruction: `Replace every 'any' type with 'unknown'.
-Use type guards (typeof, instanceof, or custom guards) where the value is actually used.
-Do NOT change runtime logic — only fix the types.`,
+const TIDY_ANY_STRATEGY: Strategy = {
+  name: 'Tidy 리팩토링',
+  tradeoff: '기존 로직 유지. 최소 변경으로 any를 가장 구체적인 타입으로 교체.',
+  instruction: `You are a TypeScript expert performing a minimal "tidy refactoring".
+Goal: eliminate every 'any' with the most specific type that fits actual usage.
+
+Rules (follow strictly):
+1. Infer types from how each variable is actually used — do not guess.
+2. For structured objects, define a named interface or type alias (e.g. User, ApiResponse).
+3. For truly dynamic values use 'unknown' with a type guard at the use site.
+4. Do NOT rename variables, restructure logic, add comments, or change runtime behavior.
+5. Keep the diff as small as possible — change ONLY type annotations.`,
 };
 
-const GUARD_CLAUSES_STRATEGY: Strategy = {
-  id: 1,
+const TIDY_NESTING_STRATEGY: Strategy = {
   name: 'Guard Clauses (조기 반환)',
-  tradeoff: '중첩 제거로 가독성 대폭 향상. 반환 포인트가 늘어남.',
+  tradeoff: '중첩 제거로 가독성 대폭 향상. 단, 반환 포인트가 늘어남.',
   instruction: `Refactor deeply nested if statements using guard clauses (early return pattern).
 Move all precondition checks to the top of the function as early returns.
 The happy path should be at the lowest indentation level.
 Do NOT change runtime logic — only restructure the control flow.`,
 };
 
-function validateLLMOutput(fullCode: string, originalSource: string): void {
-  try {
-    ts.createSourceFile('validate.ts', fullCode, ts.ScriptTarget.Latest, true);
-  } catch {
-    throw new Error('LLM 출력이 유효한 TypeScript가 아닙니다.');
+function extractTypeScript(text: string): string {
+  const fenced = text.match(/```(?:typescript|ts)?\n([\s\S]*?)\n?```/);
+  if (fenced) return fenced[1].trim();
+
+  const lines = text.split('\n');
+  const tsStart = /^(import |export |interface |type |function |class |const |let |var |async |\/\/|\/\*)/;
+  const nonTs = /^(\*\*|#{1,6} |\||-{3,})/;
+
+  let start = 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (tsStart.test(lines[i])) { start = i; break; }
   }
 
-  const ratio = fullCode.length / originalSource.length;
-  if (ratio < 0.5) {
-    throw new Error(`LLM 출력이 원본 대비 너무 짧습니다 (${Math.round(ratio * 100)}%).`);
+  let end = lines.length;
+  for (let i = lines.length - 1; i >= start; i--) {
+    const t = lines[i].trim();
+    if (t && !nonTs.test(t)) { end = i + 1; break; }
   }
-}
 
-function stripMarkdownFences(text: string): string {
-  return text.replace(/^```(?:typescript|ts)?\n?/m, '').replace(/\n?```$/m, '').trim();
+  return lines.slice(start, end).join('\n').trim();
 }
 
 function buildPrompt(
@@ -75,6 +84,28 @@ Return ONLY the complete refactored TypeScript file with no explanation, no mark
 --- FILE START ---
 ${sourceCode}
 --- FILE END ---`;
+}
+
+function callClaude(prompt: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn('claude', ['-p', '--output-format', 'text'], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+    proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+    proc.on('close', (code) => {
+      if (code !== 0) reject(new Error(stderr.trim() || `claude 종료 코드: ${code}`));
+      else resolve(stdout.trim());
+    });
+    proc.on('error', reject);
+
+    proc.stdin.write(prompt);
+    proc.stdin.end();
+  });
 }
 
 async function callLLM(
@@ -104,7 +135,7 @@ async function callLLM(
   const after = measureComplexity(fullCode);
 
   return {
-    id: strategy.id,
+    id: 1,
     name: strategy.name,
     summary,
     tradeoff: strategy.tradeoff,
