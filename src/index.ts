@@ -1,9 +1,8 @@
-import fs from 'fs';
 import { execSync } from 'child_process';
 import { detect } from './detect.js';
 import { detectNesting } from './detectNesting.js';
-import { generateTidy, generateTidyNesting } from './generate.js';
-import { apply } from './apply.js';
+import { generate as generateTidy, generateGuardClauses as generateTidyNesting } from './generate.js';
+import { apply, rollback } from './apply.js';
 import { formatSingle } from './format.js';
 
 function tscCheck(filePath: string): { ok: boolean; error: string } {
@@ -64,7 +63,7 @@ async function main() {
   const check = tscCheck(filePath);
 
   if (!check.ok) {
-    fs.copyFileSync(`${filePath}.bak`, filePath);
+    rollback(filePath);
     console.log(' 실패 — 원본 복구됨');
     console.error('\n컴파일 오류:\n' + check.error);
     process.exit(1);

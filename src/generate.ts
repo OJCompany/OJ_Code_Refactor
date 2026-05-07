@@ -1,10 +1,8 @@
-import Anthropic from '@anthropic-ai/sdk';
 import ts from 'typescript';
+import { spawn } from 'child_process';
 import type { DetectResult, RefactoringOption } from './types.js';
 import type { NestingDetectResult } from './detectNesting.js';
 import { measureComplexity } from './metrics.js';
-
-const client = new Anthropic();
 
 type CatalogType = 'replace-any' | 'guard-clauses';
 
@@ -15,7 +13,8 @@ interface Strategy {
   instruction: string;
 }
 
-const TIDY_ANY_STRATEGY: Strategy = {
+const REPLACE_ANY_STRATEGY: Strategy = {
+  id: 1,
   name: 'Tidy 리팩토링',
   tradeoff: '기존 로직 유지. 최소 변경으로 any를 가장 구체적인 타입으로 교체.',
   instruction: `You are a TypeScript expert performing a minimal "tidy refactoring".
@@ -29,7 +28,8 @@ Rules (follow strictly):
 5. Keep the diff as small as possible — change ONLY type annotations.`,
 };
 
-const TIDY_NESTING_STRATEGY: Strategy = {
+const GUARD_CLAUSES_STRATEGY: Strategy = {
+  id: 1,
   name: 'Guard Clauses (조기 반환)',
   tradeoff: '중첩 제거로 가독성 대폭 향상. 단, 반환 포인트가 늘어남.',
   instruction: `Refactor deeply nested if statements using guard clauses (early return pattern).
@@ -37,6 +37,18 @@ Move all precondition checks to the top of the function as early returns.
 The happy path should be at the lowest indentation level.
 Do NOT change runtime logic — only restructure the control flow.`,
 };
+
+function validateLLMOutput(fullCode: string, originalSource: string): void {
+  try {
+    ts.createSourceFile('validate.ts', fullCode, ts.ScriptTarget.Latest, true);
+  } catch {
+    throw new Error('LLM 출력이 유효한 TypeScript가 아닙니다.');
+  }
+  const ratio = fullCode.length / originalSource.length;
+  if (ratio < 0.5) {
+    throw new Error(`LLM 출력이 원본 대비 너무 짧습니다 (${Math.round(ratio * 100)}%).`);
+  }
+}
 
 function extractTypeScript(text: string): string {
   const fenced = text.match(/```(?:typescript|ts)?\n([\s\S]*?)\n?```/);
@@ -118,16 +130,8 @@ async function callLLM(
 ): Promise<RefactoringOption> {
   const prompt = buildPrompt(strategy, sourceCode, locations, catalog);
 
-  const message = await client.messages.create({
-    model: 'claude-sonnet-4-5',
-    max_tokens: 4096,
-    messages: [{ role: 'user', content: prompt }],
-  });
-
-  const textBlock = message.content.find((b): b is { type: 'text'; text: string } => b.type === 'text');
-  if (!textBlock) throw new Error('LLM 응답에 텍스트 블록이 없습니다.');
-
-  const fullCode = stripMarkdownFences(textBlock.text.trim());
+  const rawText = await callClaude(prompt);
+  const fullCode = extractTypeScript(rawText);
   validateLLMOutput(fullCode, sourceCode);
   const afterSnippet = fullCode.split('\n').slice(0, 5).join('\n');
 
