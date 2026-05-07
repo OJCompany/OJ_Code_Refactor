@@ -16,7 +16,7 @@ export interface DetectResult {
 }
 
 export interface RefactoringOption {
-  id: 1 | 2 | 3;
+  id: 1;
   name: string;          // "unknown으로 교체" 등
   summary: string;       // 한 줄 설명
   tradeoff: string;      // 장단점 한 줄

@@ -1,11 +1,15 @@
-import { spawn } from 'child_process';
+import Anthropic from '@anthropic-ai/sdk';
+import ts from 'typescript';
 import type { DetectResult, RefactoringOption } from './types.js';
 import type { NestingDetectResult } from './detectNesting.js';
 import { measureComplexity } from './metrics.js';
 
+const client = new Anthropic();
+
 type CatalogType = 'replace-any' | 'guard-clauses';
 
 interface Strategy {
+  id: 1;
   name: string;
   tradeoff: string;
   instruction: string;
@@ -113,8 +117,18 @@ async function callLLM(
   catalog: CatalogType
 ): Promise<RefactoringOption> {
   const prompt = buildPrompt(strategy, sourceCode, locations, catalog);
-  const raw = await callClaude(prompt);
-  const fullCode = extractTypeScript(raw);
+
+  const message = await client.messages.create({
+    model: 'claude-sonnet-4-5',
+    max_tokens: 4096,
+    messages: [{ role: 'user', content: prompt }],
+  });
+
+  const textBlock = message.content.find((b): b is { type: 'text'; text: string } => b.type === 'text');
+  if (!textBlock) throw new Error('LLM 응답에 텍스트 블록이 없습니다.');
+
+  const fullCode = stripMarkdownFences(textBlock.text.trim());
+  validateLLMOutput(fullCode, sourceCode);
   const afterSnippet = fullCode.split('\n').slice(0, 5).join('\n');
 
   const before = measureComplexity(sourceCode);
@@ -137,34 +151,24 @@ async function callLLM(
   };
 }
 
-export async function generateTidy(result: DetectResult): Promise<RefactoringOption> {
+export async function generate(result: DetectResult): Promise<RefactoringOption> {
   const locations = result.occurrences
     .map((o) => `  - line ${o.line} [${o.context}]: ${o.snippet}`)
     .join('\n');
-  const beforeSnippet = result.occurrences.slice(0, 3).map((o) => o.snippet).join('\n');
 
-  return callLLM(
-    TIDY_ANY_STRATEGY,
-    result.sourceCode,
-    locations,
-    `any ${result.occurrences.length}개를 최소 변경으로 타입 교체`,
-    beforeSnippet,
-    'replace-any'
-  );
+  const beforeSnippet = result.occurrences.slice(0, 2).map((o) => o.snippet).join('\n');
+  const summary = `'any' ${result.occurrences.length}개를 ${REPLACE_ANY_STRATEGY.name} 방식으로 교체`;
+
+  return callLLM(REPLACE_ANY_STRATEGY, result.sourceCode, locations, summary, beforeSnippet, 'replace-any');
 }
 
-export async function generateTidyNesting(result: NestingDetectResult): Promise<RefactoringOption> {
+export async function generateGuardClauses(result: NestingDetectResult): Promise<RefactoringOption> {
   const locations = result.occurrences
     .map((o) => `  - line ${o.line} [depth ${o.depth}]: ${o.snippet}`)
     .join('\n');
-  const beforeSnippet = result.occurrences.slice(0, 3).map((o) => o.snippet).join('\n');
 
-  return callLLM(
-    TIDY_NESTING_STRATEGY,
-    result.sourceCode,
-    locations,
-    `중첩 깊이 ${result.occurrences[0]?.depth ?? 3}짜리 조건문을 guard clauses로 최소 변경 리팩토링`,
-    beforeSnippet,
-    'guard-clauses'
-  );
+  const beforeSnippet = result.occurrences.slice(0, 2).map((o) => o.snippet).join('\n');
+  const summary = `중첩 깊이 ${result.occurrences[0]?.depth ?? 3}짜리 조건문을 ${GUARD_CLAUSES_STRATEGY.name} 방식으로 리팩토링`;
+
+  return callLLM(GUARD_CLAUSES_STRATEGY, result.sourceCode, locations, summary, beforeSnippet, 'guard-clauses');
 }
