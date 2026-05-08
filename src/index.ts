@@ -206,7 +206,8 @@ async function processFile(
   filePath: string,
   convention: ConventionContext,
   applied: ApplyRecord[],
-  feedbackReason?: string
+  feedbackReason?: string,
+  autoApply = false
 ): Promise<'applied' | 'skipped' | 'failed'> {
   const anyResult = detect(filePath);
   const nestingResult = detectNesting(filePath);
@@ -238,16 +239,18 @@ async function processFile(
 
   process.stdout.write(formatSingle(option, originalSource));
 
-  const { yes } = await prompts({
-    type: 'confirm',
-    name: 'yes',
-    message: '이 변경사항을 적용할까요?',
-    initial: true,
-  }, { onCancel: () => process.exit(0) });
+  if (!autoApply) {
+    const { yes } = await prompts({
+      type: 'confirm',
+      name: 'yes',
+      message: '이 변경사항을 적용할까요?',
+      initial: true,
+    }, { onCancel: () => process.exit(0) });
 
-  if (!yes) {
-    console.log(`  ${D}건너뜀${R}\n`);
-    return 'skipped';
+    if (!yes) {
+      console.log(`  ${D}건너뜀${R}\n`);
+      return 'skipped';
+    }
   }
 
   const result = apply(filePath, option);
@@ -270,7 +273,7 @@ async function processFile(
     if (!validation.pass) {
       rollback(filePath);
       console.log(`  ${Y}↻  컨벤션 불일치 — 피드백 반영 후 재생성${R}  ${D}사유: ${validation.reason}${R}\n`);
-      return processFile(filePath, convention, applied, validation.reason);
+      return processFile(filePath, convention, applied, validation.reason, autoApply);
     }
 
     const bakName = result.filePath.split('/').pop();
@@ -311,12 +314,24 @@ async function runPRMode(): Promise<void> {
   const convention = await selectConvention(process.cwd());
   console.log(`\n  ${D}컨벤션: ${convention.label}${R}\n`);
 
+  const { mode } = await prompts({
+    type: 'select',
+    name: 'mode',
+    message: '적용 방식',
+    choices: [
+      { title: '전체 자동 적용', description: '확인 없이 모든 파일 리팩토링', value: 'auto' },
+      { title: '파일별 확인',   description: '파일마다 y/n 선택',             value: 'confirm' },
+    ],
+    hint: '↑↓ 이동  Enter 선택',
+  }, { onCancel: () => process.exit(0) });
+
+  const autoApply = mode === 'auto';
   const applied: ApplyRecord[] = [];
   let failed = 0;
 
   for (let i = 0; i < files.length; i++) {
     console.log(`  ${D}── 파일 ${i + 1}/${files.length}${R}  ${files[i]}\n`);
-    const result = await processFile(files[i], convention, applied);
+    const result = await processFile(files[i], convention, applied, undefined, autoApply);
     if (result === 'failed') failed++;
   }
 
