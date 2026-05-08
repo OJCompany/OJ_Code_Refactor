@@ -1,4 +1,6 @@
 import { execSync } from 'child_process';
+import fs from 'fs';
+import path from 'path';
 import { detect } from './detect.js';
 import { detectNesting } from './detectNesting.js';
 import { generate as generateTidy, generateGuardClauses as generateTidyNesting, validateConvention } from './generate.js';
@@ -8,15 +10,36 @@ import { selectConvention } from './convention.js';
 
 const D = '\x1b[2m', B = '\x1b[1m', G = '\x1b[32m', R2 = '\x1b[31m', Y = '\x1b[33m', R = '\x1b[0m';
 
+function findTsConfig(startDir: string): string | null {
+  let dir = startDir;
+  while (true) {
+    const candidate = path.join(dir, 'tsconfig.json');
+    if (fs.existsSync(candidate)) return candidate;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
 function tscCheckAsync(filePath: string): Promise<{ ok: boolean; error: string }> {
   return new Promise(resolve => {
+    const absPath = path.resolve(filePath);
+    const tsconfig = findTsConfig(path.dirname(absPath));
     try {
-      execSync(`npx tsc --noEmit --strict --lib ES2022,DOM "${filePath}"`, { stdio: 'pipe' });
+      const cmd = tsconfig
+        ? `npx tsc --noEmit -p "${tsconfig}"`
+        : `npx tsc --noEmit --strict --lib ES2022,DOM "${absPath}"`;
+      execSync(cmd, { stdio: 'pipe' });
       resolve({ ok: true, error: '' });
     } catch (err: any) {
-      const stderr = err.stderr?.toString().trim();
-      const stdout = err.stdout?.toString().trim();
-      resolve({ ok: false, error: stderr || stdout || '' });
+      const raw: string = err.stderr?.toString() || err.stdout?.toString() || '';
+      if (tsconfig) {
+        const fileErrors = raw.split('\n').filter(l => l.startsWith(absPath)).join('\n').trim();
+        if (!fileErrors) { resolve({ ok: true, error: '' }); return; }
+        resolve({ ok: false, error: fileErrors });
+      } else {
+        resolve({ ok: false, error: raw.trim() });
+      }
     }
   });
 }
