@@ -56,11 +56,12 @@ export function detect(filePath: string): DetectResult {
       });
     }
 
-    // 변수 선언의 any (const x: any = ...)
+    // 변수 선언의 any (const x: any = ...) — catch (err: any) 제외
     else if (
       ts.isVariableDeclaration(node) &&
       node.type &&
-      isAnyKeyword(node.type)
+      isAnyKeyword(node.type) &&
+      !ts.isCatchClause(node.parent)
     ) {
       const { line, column } = getLineCol(node.type.getStart(sourceFile));
       occurrences.push({

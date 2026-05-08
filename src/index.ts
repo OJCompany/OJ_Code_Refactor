@@ -30,28 +30,46 @@ function confirm(question: string): Promise<boolean> {
   });
 }
 
-function getChangedTsFiles(): string[] {
-  const bases = ['develop', 'main', 'master'];
-  for (const base of bases) {
+function getBaseBranch(): string {
+  try {
+    const remote = execSync('git rev-parse --abbrev-ref origin/HEAD', { stdio: 'pipe' })
+      .toString().trim();
+    return remote.replace('origin/', '');
+  } catch {}
+  for (const b of ['develop', 'main', 'master']) {
     try {
-      const out = execSync(`git diff ${base}...HEAD --name-only -- "*.ts"`, { stdio: 'pipe' })
-        .toString()
-        .trim();
-      if (out) return out.split('\n').filter(f => f.endsWith('.ts'));
-      return [];
+      execSync(`git rev-parse --verify ${b}`, { stdio: 'pipe' });
+      return b;
     } catch {}
   }
-  return [];
+  return 'main';
 }
 
-async function processFile(filePath: string, convention: ConventionContext): Promise<void> {
+function getChangedTsFiles(): string[] {
+  const base = getBaseBranch();
+  try {
+    const out = execSync(`git diff ${base}...HEAD --name-only -- "*.ts"`, { stdio: 'pipe' })
+      .toString().trim();
+    return out ? out.split('\n').filter(f => f.endsWith('.ts')) : [];
+  } catch {
+    return [];
+  }
+}
+
+type ApplyRecord = { filePath: string };
+
+async function processFile(
+  filePath: string,
+  convention: ConventionContext,
+  applied: ApplyRecord[]
+): Promise<'applied' | 'skipped' | 'failed'> {
   const anyResult = detect(filePath);
   const nestingResult = detectNesting(filePath);
   const useNesting = anyResult.occurrences.length === 0 && nestingResult.occurrences.length > 0;
 
   if (anyResult.occurrences.length === 0 && nestingResult.occurrences.length === 0) {
     console.log(`  ${D}skip${R}  ${filePath}  ${D}— 스멜 없음${R}`);
-    return;
+    return 'skipped';
   }
 
   const count = useNesting ? nestingResult.occurrences.length : anyResult.occurrences.length;
@@ -69,7 +87,7 @@ async function processFile(filePath: string, convention: ConventionContext): Pro
     process.stdout.write(`\r${' '.repeat(30)}\r`);
   } catch (err) {
     console.error(`\n  ${R2}✗  generate 실패:${R} ${(err as Error).message}\n`);
-    return;
+    return 'failed';
   }
 
   const originalSource = useNesting ? nestingResult.sourceCode : anyResult.sourceCode;
@@ -78,7 +96,7 @@ async function processFile(filePath: string, convention: ConventionContext): Pro
   const yes = await confirm(`  ${Y}?  이 변경사항을 적용할까요?${R}  ${D}(y/n):${R} `);
   if (!yes) {
     console.log(`  ${D}건너뜀${R}\n`);
-    return;
+    return 'skipped';
   }
 
   const result = apply(filePath, option);
@@ -91,11 +109,13 @@ async function processFile(filePath: string, convention: ConventionContext): Pro
     rollback(filePath);
     console.log(`  ${R2}✗  tsc 실패 — 원본 복구됨${R}\n`);
     console.error(check.error);
-    return;
+    return 'failed';
   }
 
+  applied.push({ filePath: result.filePath });
   const bakName = result.filePath.split('/').pop();
   console.log(`  ${G}✓  tsc 통과${R}  ${D}·  백업: ${bakName}.bak${R}\n`);
+  return 'applied';
 }
 
 async function runPRMode(): Promise<void> {
@@ -112,17 +132,37 @@ async function runPRMode(): Promise<void> {
   const convention = await selectConvention(process.cwd());
   console.log(`\n  ${D}컨벤션: ${convention.label}${R}\n`);
 
-  for (const file of files) {
-    await processFile(file, convention);
+  const applied: ApplyRecord[] = [];
+  let failed = 0;
+
+  for (let i = 0; i < files.length; i++) {
+    console.log(`  ${D}── 파일 ${i + 1}/${files.length}${R}  ${files[i]}\n`);
+    const result = await processFile(files[i], convention, applied);
+    if (result === 'failed') failed++;
   }
 
-  console.log(`  ${G}◆  완료${R}\n`);
+  console.log(`  ${D}────────────────────────────────────────────────────────────${R}`);
+  console.log(`  ${G}◆  완료${R}  ${D}·  적용 ${applied.length}개  건너뜀 ${files.length - applied.length - failed}개  실패 ${failed}개${R}\n`);
+
+  if (failed > 0 && applied.length > 0) {
+    const revert = await confirm(`  ${Y}?  적용된 ${applied.length}개 파일도 되돌릴까요?${R}  ${D}(y/n):${R} `);
+    if (revert) {
+      for (const { filePath } of applied) {
+        const ok = rollback(filePath);
+        console.log(ok
+          ? `  ${G}↩  복구됨:${R} ${filePath}`
+          : `  ${R2}✗  백업 없음:${R} ${filePath}`
+        );
+      }
+      console.log();
+    }
+  }
 }
 
 async function runSingleFile(filePath: string): Promise<void> {
   const convention = await selectConvention(process.cwd());
   console.log(`\n  ${D}컨벤션: ${convention.label}${R}\n`);
-  await processFile(filePath, convention);
+  await processFile(filePath, convention, []);
 }
 
 async function main() {

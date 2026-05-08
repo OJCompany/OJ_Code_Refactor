@@ -47,7 +47,7 @@ function validateLLMOutput(fullCode: string, originalSource: string): void {
     throw new Error('LLM 출력이 유효한 TypeScript가 아닙니다.');
   }
   const ratio = fullCode.length / originalSource.length;
-  if (ratio < 0.5) {
+  if (ratio < 0.3) {
     throw new Error(`LLM 출력이 원본 대비 너무 짧습니다 (${Math.round(ratio * 100)}%).`);
   }
 }
