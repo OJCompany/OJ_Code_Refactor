@@ -1,9 +1,11 @@
 import { execSync } from 'child_process';
+import path from 'path';
 import { detect } from './detect.js';
 import { detectNesting } from './detectNesting.js';
 import { generate as generateTidy, generateGuardClauses as generateTidyNesting } from './generate.js';
 import { apply, rollback } from './apply.js';
 import { formatSingle } from './format.js';
+import { selectConvention } from './convention.js';
 
 function tscCheck(filePath: string): { ok: boolean; error: string } {
   try {
@@ -43,27 +45,33 @@ async function main() {
 
   console.log(`\n  ${B}◆  ${fname}${R}  ${D}·  ${label}${R}\n`);
 
-  // 2. generate
+  // 2. 컨벤션 선택
+  const cwd = process.cwd();
+  const convention = await selectConvention(cwd);
+  const D2 = '\x1b[2m', R3 = '\x1b[0m';
+  console.log(`\n  ${D2}컨벤션: ${convention.label}${R3}\n`);
+
+  // 3. generate
   let option;
   try {
     process.stdout.write(`  ${D}▸ 리팩토링 생성 중 ...${R}`);
     option = useNesting
-      ? await generateTidyNesting(nestingResult)
-      : await generateTidy(anyResult);
+      ? await generateTidyNesting(nestingResult, convention.rules || undefined)
+      : await generateTidy(anyResult, convention.rules || undefined);
     process.stdout.write(`\r${' '.repeat(30)}\r`);
   } catch (err) {
     console.error(`\n  ${R2}✗  generate 실패:${R} ${(err as Error).message}\n`);
     process.exit(1);
   }
 
-  // 3. full diff 출력
+  // 4. full diff 출력
   const originalSource = useNesting ? nestingResult.sourceCode : anyResult.sourceCode;
   process.stdout.write(formatSingle(option, originalSource));
 
-  // 4. apply
+  // 5. apply
   const result = apply(filePath, option);
 
-  // 5. tsc 검증 — 실패 시 백업에서 복구
+  // 6. tsc 검증 — 실패 시 백업에서 복구
   process.stdout.write(`  ${D}▸ tsc 검증 중 ...${R}`);
   const check = tscCheck(filePath);
   process.stdout.write(`\r${' '.repeat(30)}\r`);

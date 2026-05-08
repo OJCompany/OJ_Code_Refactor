@@ -56,9 +56,16 @@ function extractTypeScript(text: string): string {
   const fenced = text.match(/```(?:typescript|ts)?\n([\s\S]*?)\n?```/);
   if (fenced) return fenced[1].trim();
 
+  // --- 구분선이 텍스트 후반부에 있을 때만 trailing 설명으로 간주하고 잘라냄
+  const separatorMatch = text.search(/\n---+\n/);
+  if (separatorMatch !== -1 && separatorMatch > text.length / 2) {
+    text = text.substring(0, separatorMatch);
+  }
+
   const lines = text.split('\n');
   const tsStart = /^(import |export |interface |type |function |class |const |let |var |async |\/\/|\/\*)/;
-  const nonTs = /^(\*\*|#{1,6} |\||-{3,})/;
+  // 마크다운 확정 패턴: 헤더, 볼드, 테이블, 수평선, 불릿 리스트 (- 또는 *)
+  const nonTs = /^(\*\*|#{1,6} |\||-{3,}|[-*] )/;
 
   let start = 0;
   for (let i = 0; i < lines.length; i++) {
@@ -78,22 +85,27 @@ function buildPrompt(
   strategy: Strategy,
   sourceCode: string,
   locations: string,
-  catalog: CatalogType
+  catalog: CatalogType,
+  conventionRules?: string
 ): string {
   const task =
     catalog === 'replace-any'
       ? "eliminate 'any' types"
       : 'remove deeply nested conditionals';
 
+  const conventionSection = conventionRules
+    ? `\nCode conventions to follow:\n${conventionRules}\n`
+    : '';
+
   return `You are a TypeScript expert. Refactor the following file to ${task}.
 
 Strategy: ${strategy.name}
 ${strategy.instruction}
-
+${conventionSection}
 Detected locations:
 ${locations}
 
-Return ONLY the complete refactored TypeScript file with no explanation, no markdown fences.
+Return ONLY the complete refactored TypeScript file. Do not add any text after the last line of code — no explanations, no "Key decisions", no markdown, no "---" separator. The output must end at the closing brace of the last function.
 
 --- FILE START ---
 ${sourceCode}
@@ -128,9 +140,10 @@ async function callLLM(
   locations: string,
   summary: string,
   beforeSnippet: string,
-  catalog: CatalogType
+  catalog: CatalogType,
+  conventionRules?: string
 ): Promise<RefactoringOption> {
-  const prompt = buildPrompt(strategy, sourceCode, locations, catalog);
+  const prompt = buildPrompt(strategy, sourceCode, locations, catalog, conventionRules);
 
   const rawText = await callClaude(prompt);
   const fullCode = extractTypeScript(rawText);
@@ -157,7 +170,7 @@ async function callLLM(
   };
 }
 
-export async function generate(result: DetectResult): Promise<RefactoringOption> {
+export async function generate(result: DetectResult, conventionRules?: string): Promise<RefactoringOption> {
   const locations = result.occurrences
     .map((o) => `  - line ${o.line} [${o.context}]: ${o.snippet}`)
     .join('\n');
@@ -165,10 +178,10 @@ export async function generate(result: DetectResult): Promise<RefactoringOption>
   const beforeSnippet = result.occurrences.slice(0, 2).map((o) => o.snippet).join('\n');
   const summary = `'any' ${result.occurrences.length}개를 ${REPLACE_ANY_STRATEGY.name} 방식으로 교체`;
 
-  return callLLM(REPLACE_ANY_STRATEGY, result.sourceCode, locations, summary, beforeSnippet, 'replace-any');
+  return callLLM(REPLACE_ANY_STRATEGY, result.sourceCode, locations, summary, beforeSnippet, 'replace-any', conventionRules);
 }
 
-export async function generateGuardClauses(result: NestingDetectResult): Promise<RefactoringOption> {
+export async function generateGuardClauses(result: NestingDetectResult, conventionRules?: string): Promise<RefactoringOption> {
   const locations = result.occurrences
     .map((o) => `  - line ${o.line} [depth ${o.depth}]: ${o.snippet}`)
     .join('\n');
@@ -176,5 +189,5 @@ export async function generateGuardClauses(result: NestingDetectResult): Promise
   const beforeSnippet = result.occurrences.slice(0, 2).map((o) => o.snippet).join('\n');
   const summary = `중첩 깊이 ${result.occurrences[0]?.depth ?? 3}짜리 조건문을 ${GUARD_CLAUSES_STRATEGY.name} 방식으로 리팩토링`;
 
-  return callLLM(GUARD_CLAUSES_STRATEGY, result.sourceCode, locations, summary, beforeSnippet, 'guard-clauses');
+  return callLLM(GUARD_CLAUSES_STRATEGY, result.sourceCode, locations, summary, beforeSnippet, 'guard-clauses', conventionRules);
 }
