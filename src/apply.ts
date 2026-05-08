@@ -1,4 +1,5 @@
 import fs from 'fs';
+import path from 'path';
 import type { ApplyResult, RefactoringOption } from './types.js';
 
 export function apply(filePath: string, option: RefactoringOption): ApplyResult {
@@ -14,8 +15,9 @@ export function apply(filePath: string, option: RefactoringOption): ApplyResult 
 }
 
 export function rollback(filePath: string): boolean {
-  const dir = filePath.substring(0, filePath.lastIndexOf('/') + 1) || '.';
-  const base = filePath.substring(filePath.lastIndexOf('/') + 1);
+  const absPath = path.resolve(filePath);
+  const dir = path.dirname(absPath);
+  const base = path.basename(absPath);
 
   const bakFiles = fs.readdirSync(dir)
     .filter((f) => f.startsWith(base + '.') && f.endsWith('.bak'))
@@ -24,8 +26,8 @@ export function rollback(filePath: string): boolean {
 
   if (bakFiles.length === 0) return false;
 
-  const latest = `${dir}${bakFiles[0]}`;
-  fs.copyFileSync(latest, filePath);
+  const latest = path.join(dir, bakFiles[0]);
+  fs.copyFileSync(latest, absPath);
   fs.unlinkSync(latest);
 
   return true;
