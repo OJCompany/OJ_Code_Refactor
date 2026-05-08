@@ -1,14 +1,17 @@
 import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import prompts from 'prompts';
 import { detect } from './detect.js';
 import { detectNesting } from './detectNesting.js';
 import { generate as generateTidy, generateGuardClauses as generateTidyNesting, validateConvention } from './generate.js';
 import { apply, rollback } from './apply.js';
 import { formatSingle } from './format.js';
-import { selectConvention } from './convention.js';
+import { selectConvention, type ConventionContext } from './convention.js';
 
 const D = '\x1b[2m', B = '\x1b[1m', G = '\x1b[32m', R2 = '\x1b[31m', Y = '\x1b[33m', R = '\x1b[0m';
+
+// ─── tsconfig 탐색 + 파일 단위 tsc 검증 ───────────────────────────────────────
 
 function findTsConfig(startDir: string): string | null {
   let dir = startDir;
@@ -43,6 +46,36 @@ function tscCheckAsync(filePath: string): Promise<{ ok: boolean; error: string }
     }
   });
 }
+
+// ─── PR 모드 유틸 ─────────────────────────────────────────────────────────────
+
+function getBaseBranch(): string {
+  try {
+    const remote = execSync('git rev-parse --abbrev-ref origin/HEAD', { stdio: 'pipe' })
+      .toString().trim();
+    return remote.replace('origin/', '');
+  } catch {}
+  for (const b of ['develop', 'main', 'master']) {
+    try {
+      execSync(`git rev-parse --verify ${b}`, { stdio: 'pipe' });
+      return b;
+    } catch {}
+  }
+  return 'main';
+}
+
+function getChangedTsFiles(): string[] {
+  const base = getBaseBranch();
+  try {
+    const out = execSync(`git diff ${base}...HEAD --name-only -- "*.ts"`, { stdio: 'pipe' })
+      .toString().trim();
+    return out ? out.split('\n').filter(f => f.endsWith('.ts')) : [];
+  } catch {
+    return [];
+  }
+}
+
+// ─── 쿼카 배너 + 로딩 애니메이션 ─────────────────────────────────────────────
 
 function printBanner() {
   const Rb = '\x1b[0m', Bb = '\x1b[1m';
@@ -165,50 +198,57 @@ async function withQuokkaAnimation<T>(task: Promise<T>): Promise<T> {
   }
 }
 
-async function main() {
-  printBanner();
+// ─── 파일 단위 리팩토링 (단일 + PR 모드 공용) ─────────────────────────────────
 
-  const filePath = process.argv[2];
-  if (!filePath) {
-    console.error('사용법: node dist/index.js <파일경로>');
-    process.exit(1);
-  }
+type ApplyRecord = { filePath: string };
 
+async function processFile(
+  filePath: string,
+  convention: ConventionContext,
+  applied: ApplyRecord[],
+  feedbackReason?: string
+): Promise<'applied' | 'skipped' | 'failed'> {
   const anyResult = detect(filePath);
   const nestingResult = detectNesting(filePath);
   const useNesting = anyResult.occurrences.length === 0 && nestingResult.occurrences.length > 0;
 
   if (anyResult.occurrences.length === 0 && nestingResult.occurrences.length === 0) {
-    console.log(`\n  ${D}◆${R}  리팩토링할 코드 스멜이 없습니다.\n`);
-    process.exit(0);
+    console.log(`  ${D}skip${R}  ${filePath}  ${D}— 스멜 없음${R}`);
+    return 'skipped';
   }
 
   const count = useNesting ? nestingResult.occurrences.length : anyResult.occurrences.length;
   const label = useNesting ? `중첩 조건문 ${count}건` : `any 타입 ${count}건`;
   const fname = filePath.split('/').pop();
+  const originalSource = useNesting ? nestingResult.sourceCode : anyResult.sourceCode;
 
   console.log(`\n  ${B}◆  ${fname}${R}  ${D}·  ${label}${R}\n`);
 
-  const convention = await selectConvention(process.cwd());
-  console.log(`\n  ${D}컨벤션: ${convention.label}${R}\n`);
-
-  const originalSource = useNesting ? nestingResult.sourceCode : anyResult.sourceCode;
-
-  async function generateOption(feedbackReason?: string) {
-    try {
-      return await withQuokkaAnimation(
-        useNesting
-          ? generateTidyNesting(nestingResult, convention.rules || undefined, feedbackReason)
-          : generateTidy(anyResult, convention.rules || undefined, feedbackReason)
-      );
-    } catch (err) {
-      console.error(`\n  ${R2}✗  generate 실패:${R} ${(err as Error).message}\n`);
-      process.exit(1);
-    }
+  let option;
+  try {
+    option = await withQuokkaAnimation(
+      useNesting
+        ? generateTidyNesting(nestingResult, convention.rules || undefined, feedbackReason)
+        : generateTidy(anyResult, convention.rules || undefined, feedbackReason)
+    );
+  } catch (err) {
+    console.error(`\n  ${R2}✗  generate 실패:${R} ${(err as Error).message}\n`);
+    return 'failed';
   }
 
-  let option = await generateOption();
   process.stdout.write(formatSingle(option, originalSource));
+
+  const { yes } = await prompts({
+    type: 'confirm',
+    name: 'yes',
+    message: '이 변경사항을 적용할까요?',
+    initial: true,
+  }, { onCancel: () => process.exit(0) });
+
+  if (!yes) {
+    console.log(`  ${D}건너뜀${R}\n`);
+    return 'skipped';
+  }
 
   const result = apply(filePath, option);
 
@@ -224,40 +264,17 @@ async function main() {
       rollback(filePath);
       console.log(`  ${R2}✗  tsc 실패 — 원본 복구됨${R}\n`);
       console.error(tscResult.error);
-      process.exit(1);
+      return 'failed';
     }
 
     if (!validation.pass) {
       rollback(filePath);
       console.log(`  ${Y}↻  컨벤션 불일치 — 피드백 반영 후 재생성${R}  ${D}사유: ${validation.reason}${R}\n`);
-      option = await generateOption(validation.reason);
-      process.stdout.write(formatSingle(option, originalSource));
-      apply(filePath, option);
-
-      process.stdout.write(`  ${Y}▸ 재검증 중 ...${R}  ${D}(tsc + LLM 컨벤션)${R}`);
-      const [tscResult2, validation2] = await Promise.all([
-        tscCheckAsync(filePath),
-        validateConvention(option.fullCode, convention.rules),
-      ]);
-      process.stdout.write(`\r${' '.repeat(60)}\r`);
-
-      if (!tscResult2.ok) {
-        rollback(filePath);
-        console.log(`  ${R2}✗  tsc 실패 — 원본 복구됨${R}\n`);
-        console.error(tscResult2.error);
-        process.exit(1);
-      }
-      if (!validation2.pass) {
-        rollback(filePath);
-        console.log(`  ${R2}✗  컨벤션 재검증 실패 — 원본 복구됨${R}\n`);
-        console.log(`  ${D}사유: ${validation2.reason}${R}\n`);
-        process.exit(1);
-      }
+      return processFile(filePath, convention, applied, validation.reason);
     }
 
     const bakName = result.filePath.split('/').pop();
     console.log(`  ${G}✓  tsc 통과${R}  ${G}✓  컨벤션 통과${R}  ${D}·  백업: ${bakName}.bak${R}\n`);
-
   } else {
     process.stdout.write(`  ${D}▸ tsc 검증 중 ...${R}`);
     const check = await tscCheckAsync(filePath);
@@ -267,11 +284,90 @@ async function main() {
       rollback(filePath);
       console.log(`  ${R2}✗  tsc 실패 — 원본 복구됨${R}\n`);
       console.error(check.error);
-      process.exit(1);
+      return 'failed';
     }
 
     const bakName = result.filePath.split('/').pop();
     console.log(`  ${G}✓  tsc 통과${R}  ${D}·  백업: ${bakName}.bak${R}\n`);
+  }
+
+  applied.push({ filePath: result.filePath });
+  return 'applied';
+}
+
+// ─── PR 모드 ──────────────────────────────────────────────────────────────────
+
+async function runPRMode(): Promise<void> {
+  const files = getChangedTsFiles();
+
+  if (files.length === 0) {
+    console.log(`\n  ${D}◆${R}  변경된 TypeScript 파일이 없습니다.\n`);
+    return;
+  }
+
+  console.log(`\n  ${B}◆  PR 모드${R}  ${D}·  변경 파일 ${files.length}개${R}\n`);
+  files.forEach((f, i) => console.log(`  ${D}${i + 1}.${R} ${f}`));
+
+  const convention = await selectConvention(process.cwd());
+  console.log(`\n  ${D}컨벤션: ${convention.label}${R}\n`);
+
+  const applied: ApplyRecord[] = [];
+  let failed = 0;
+
+  for (let i = 0; i < files.length; i++) {
+    console.log(`  ${D}── 파일 ${i + 1}/${files.length}${R}  ${files[i]}\n`);
+    const result = await processFile(files[i], convention, applied);
+    if (result === 'failed') failed++;
+  }
+
+  console.log(`  ${D}────────────────────────────────────────────────────────────${R}`);
+  console.log(`  ${G}◆  완료${R}  ${D}·  적용 ${applied.length}개  건너뜀 ${files.length - applied.length - failed}개  실패 ${failed}개${R}\n`);
+
+  if (failed > 0 && applied.length > 0) {
+    const { revert } = await prompts({
+      type: 'confirm',
+      name: 'revert',
+      message: `적용된 ${applied.length}개 파일도 되돌릴까요?`,
+      initial: false,
+    }, { onCancel: () => process.exit(0) });
+
+    if (revert) {
+      for (const { filePath } of applied) {
+        const ok = rollback(filePath);
+        console.log(ok
+          ? `  ${G}↩  복구됨:${R} ${filePath}`
+          : `  ${R2}✗  백업 없음:${R} ${filePath}`
+        );
+      }
+      console.log();
+    }
+  }
+}
+
+// ─── 단일 파일 모드 ───────────────────────────────────────────────────────────
+
+async function runSingleFile(filePath: string): Promise<void> {
+  const convention = await selectConvention(process.cwd());
+  console.log(`\n  ${D}컨벤션: ${convention.label}${R}\n`);
+  await processFile(filePath, convention, []);
+}
+
+// ─── 진입점 ───────────────────────────────────────────────────────────────────
+
+async function main() {
+  printBanner();
+
+  const args = process.argv.slice(2);
+  const isPR = args.includes('--pr');
+  const filePath = args.find(a => !a.startsWith('--'));
+
+  if (isPR) {
+    await runPRMode();
+  } else if (filePath) {
+    await runSingleFile(filePath);
+  } else {
+    console.error(`사용법:\n  node dist/index.js <파일경로>\n  node dist/index.js --pr`);
+    process.exit(1);
   }
 }
 
