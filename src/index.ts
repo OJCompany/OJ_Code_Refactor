@@ -44,7 +44,130 @@ function tscCheckAsync(filePath: string): Promise<{ ok: boolean; error: string }
   });
 }
 
+function printBanner() {
+  const Rb = '\x1b[0m', Bb = '\x1b[1m';
+  const fg = (r: number, g: number, b: number) => `\x1b[38;2;${r};${g};${b}m`;
+  const gradient = (text: string, from: [number,number,number], to: [number,number,number]) =>
+    text.split('').map((ch, i) => {
+      const t = text.length === 1 ? 0 : i / (text.length - 1);
+      const r = Math.round(from[0] + (to[0] - from[0]) * t);
+      const g = Math.round(from[1] + (to[1] - from[1]) * t);
+      const bv = Math.round(from[2] + (to[2] - from[2]) * t);
+      return fg(r, g, bv) + ch;
+    }).join('') + Rb;
+
+  const displayWidth = (s: string) => {
+    const plain = s.replace(/\x1b\[[^m]*m/g, '');
+    let w = 0;
+    for (const ch of plain) {
+      const cp = ch.codePointAt(0)!;
+      w += (
+        (cp >= 0x1100 && cp <= 0x115F) ||
+        (cp >= 0x2E80 && cp <= 0x303E) ||
+        (cp >= 0x3041 && cp <= 0x33FF) ||
+        (cp >= 0x3400 && cp <= 0x4DBF) ||
+        (cp >= 0x4E00 && cp <= 0x9FFF) ||
+        (cp >= 0xAC00 && cp <= 0xD7AF) ||
+        (cp >= 0xF900 && cp <= 0xFAFF) ||
+        (cp >= 0xFF00 && cp <= 0xFF60)
+      ) ? 2 : 1;
+    }
+    return w;
+  };
+
+  const PURPLE: [number,number,number] = [125, 86, 244];
+  const PINK:   [number,number,number] = [255, 100, 180];
+  const AQUA:   [number,number,number] = [100, 220, 200];
+  const YELLOW: [number,number,number] = [255, 210, 80];
+  const TAN:    [number,number,number] = [210, 170, 100];
+  const BROWN:  [number,number,number] = [160, 110, 60];
+
+  const borderC = fg(...PURPLE);
+  const w = 44;
+  const top    = borderC + '  ╭' + '─'.repeat(w) + '╮' + Rb;
+  const bottom = borderC + '  ╰' + '─'.repeat(w) + '╯' + Rb;
+
+  const bar = (content: string) => {
+    const pad = w - displayWidth(content);
+    return borderC + '  │' + Rb + content + ' '.repeat(Math.max(0, pad)) + borderC + '│' + Rb;
+  };
+
+  const titleLine = '  ' + Bb + gradient('OJ Refactor', PURPLE, PINK) + Rb;
+  const subLine   = '  ' + fg(...AQUA) + 'TypeScript 리팩토링 도구' + Rb;
+  const qLine1    = '  ' + fg(...TAN)   + Bb + '/\\ ___ /\\ ' + Rb
+                  + '  ' + fg(...YELLOW) + Bb + '쿼카와 함께하는 클린코드' + Rb;
+  const qLine2    = '  ' + fg(...TAN)   + Bb + '(  o\\_/o  )' + Rb;
+  const qLine3    = '  ' + fg(...BROWN) + Bb + '(___~~~___)' + Rb;
+
+  console.log(top);
+  console.log(bar(titleLine));
+  console.log(bar(subLine));
+  console.log(bar(''));
+  console.log(bar(qLine1));
+  console.log(bar(qLine2));
+  console.log(bar(qLine3));
+  console.log(bar(''));
+  console.log(bottom);
+  console.log();
+}
+
+async function withQuokkaAnimation<T>(task: Promise<T>): Promise<T> {
+  const TAN   = '\x1b[38;2;210;170;100m';
+  const BROWN = '\x1b[38;2;160;110;60m';
+  const DIM   = '\x1b[2m';
+  const BLD   = '\x1b[1m';
+  const RST   = '\x1b[0m';
+
+  const frames = [
+    [TAN+BLD+'  /\\ ___ /\\  '+RST, TAN+BLD+' (  o\\_/o  ) '+RST, BROWN+BLD+' (___~~~___) '+RST],
+    [TAN+BLD+' /\\ ___ /\\   '+RST, TAN+BLD+'(  o\\_/o  )  '+RST, BROWN+BLD+'(___~~~___)  '+RST],
+    [TAN+BLD+'  /\\ ___ /\\  '+RST, TAN+BLD+' (  o\\_/o  ) '+RST, BROWN+BLD+' (___~~~___) '+RST],
+    [TAN+BLD+'   /\\ ___ /\\ '+RST, TAN+BLD+'  (  o\\_/o  )'+RST, BROWN+BLD+'  (___~~~___)'+RST],
+  ];
+  const dots = ['▸ 생성 중 .  ', '▸ 생성 중 .. ', '▸ 생성 중 ...'];
+
+  const LINE_COUNT = 4;
+  let frameIdx = 0;
+  let done = false;
+
+  process.stdout.write('\n'.repeat(LINE_COUNT));
+
+  function render() {
+    process.stdout.write(`\x1b[${LINE_COUNT}A`);
+    const frame = frames[frameIdx % frames.length];
+    for (const line of frame) {
+      process.stdout.write(`\x1b[2K  ${line}\n`);
+    }
+    process.stdout.write(`\x1b[2K  ${DIM}${dots[frameIdx % dots.length]}${RST}\n`);
+    frameIdx++;
+  }
+
+  function clear() {
+    process.stdout.write(`\x1b[${LINE_COUNT}A`);
+    for (let i = 0; i < LINE_COUNT; i++) process.stdout.write('\x1b[2K\n');
+    process.stdout.write(`\x1b[${LINE_COUNT}A`);
+  }
+
+  render();
+  const interval = setInterval(() => { if (!done) render(); }, 160);
+
+  try {
+    const result = await task;
+    done = true;
+    clearInterval(interval);
+    clear();
+    return result;
+  } catch (err) {
+    done = true;
+    clearInterval(interval);
+    clear();
+    throw err;
+  }
+}
+
 async function main() {
+  printBanner();
+
   const filePath = process.argv[2];
   if (!filePath) {
     console.error('사용법: node dist/index.js <파일경로>');
@@ -72,15 +195,13 @@ async function main() {
   const originalSource = useNesting ? nestingResult.sourceCode : anyResult.sourceCode;
 
   async function generateOption(feedbackReason?: string) {
-    process.stdout.write(`  ${D}▸ 리팩토링 생성 중 ...${R}`);
     try {
-      const opt = useNesting
-        ? await generateTidyNesting(nestingResult, convention.rules || undefined, feedbackReason)
-        : await generateTidy(anyResult, convention.rules || undefined, feedbackReason);
-      process.stdout.write(`\r${' '.repeat(30)}\r`);
-      return opt;
+      return await withQuokkaAnimation(
+        useNesting
+          ? generateTidyNesting(nestingResult, convention.rules || undefined, feedbackReason)
+          : generateTidy(anyResult, convention.rules || undefined, feedbackReason)
+      );
     } catch (err) {
-      process.stdout.write(`\r${' '.repeat(30)}\r`);
       console.error(`\n  ${R2}✗  generate 실패:${R} ${(err as Error).message}\n`);
       process.exit(1);
     }
@@ -92,7 +213,6 @@ async function main() {
   const result = apply(filePath, option);
 
   if (convention.parallel && convention.rules) {
-    // tsc + LLM 검증 병렬 실행
     process.stdout.write(`  ${Y}▸ 병렬 검증 중 ...${R}  ${D}(tsc + LLM 컨벤션)${R}`);
     const [tscResult, validation] = await Promise.all([
       tscCheckAsync(filePath),
@@ -139,7 +259,6 @@ async function main() {
     console.log(`  ${G}✓  tsc 통과${R}  ${G}✓  컨벤션 통과${R}  ${D}·  백업: ${bakName}.bak${R}\n`);
 
   } else {
-    // 기본: tsc만 검증
     process.stdout.write(`  ${D}▸ tsc 검증 중 ...${R}`);
     const check = await tscCheckAsync(filePath);
     process.stdout.write(`\r${' '.repeat(30)}\r`);
