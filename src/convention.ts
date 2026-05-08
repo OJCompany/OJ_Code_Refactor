@@ -1,11 +1,13 @@
 import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
+import { execSync } from 'child_process';
 
 export interface ConventionContext {
   source: 'auto' | 'enterprise';
   label: string;
   rules: string;
+  parallel?: boolean;
 }
 
 const D = '\x1b[2m', B = '\x1b[1m', R = '\x1b[0m';
@@ -145,53 +147,102 @@ function appendOverride(rules: string, override: string): string {
   return `${rules}${separator}=== CONVENTIONS.md (project override — takes priority) ===\n${override}`;
 }
 
+function runRepomix(cwd: string, include?: string): string {
+  const tmp = path.join(cwd, '.repomix-context.txt');
+  try {
+    const includeFlag = include
+      ? `--include "${include}"`
+      : '--include "**/*.ts" --ignore "dist/**,node_modules/**,**/*.d.ts"';
+    execSync(`npx repomix ${includeFlag} --output "${tmp}" --style plain`, {
+      cwd,
+      stdio: 'pipe',
+    });
+    const content = fs.readFileSync(tmp, 'utf-8');
+    fs.unlinkSync(tmp);
+    return content;
+  } catch {
+    if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+    return '';
+  }
+}
+
 export async function selectConvention(cwd: string): Promise<ConventionContext> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
   try {
-    console.log(`\n  ${B}◆  코드 컨벤션 설정${R}\n`);
-    console.log(`  ${D}[1]${R} 프로젝트 컨벤션 자동 감지`);
-    console.log(`  ${D}[2]${R} 기업 표준 컨벤션 사용\n`);
+    console.log(`\n  ${B}◆  컨텍스트 설정${R}\n`);
+    console.log(`  ${D}[1]${R} 프로젝트 컨벤션 자동 감지     ${D}eslint / tsconfig 기반 · 빠름${R}`);
+    console.log(`  ${D}[2]${R} 기업 표준 컨벤션 선택         ${D}Airbnb / Google / XO · 빠름${R}`);
+    console.log(`  ${D}[3]${R} 파일 직접 지정 (repomix)      ${D}참고 파일 선택 · 정확도 높음 · 토큰 보통${R}`);
+    console.log(`  ${D}[4]${R} 프로젝트 전체 분석 (repomix)  ${D}전체 코드 분석 · 정확도 최고 · 토큰 많음${R}\n`);
 
-    const choice = await ask(rl, `  선택 (1/2): `);
+    const choice = await ask(rl, `  선택 (1~4): `);
     const override = readConventionsFile(cwd);
 
-    if (choice !== '2') {
-      const configs = detectConfigFiles(cwd);
+    if (choice === '3') {
+      const input = await ask(rl, `  참고 파일 입력 ${D}(쉼표 구분, 예: src/utils.ts,src/types.ts)${R}: `);
       rl.close();
+      process.stdout.write(`  ${D}▸ repomix 실행 중 ...${R}`);
+      const raw = runRepomix(cwd, input.trim());
+      const context = raw.slice(0, 12000);
+      process.stdout.write(`\r${' '.repeat(30)}\r`);
       const rules = appendOverride(
-        configs ? `Follow the project's existing code conventions below:\n\n${configs}` : '',
+        context ? `Reference code from this project (use these patterns as style guide):\n\n${context}` : '',
         override,
       );
-      const hasOverride = !!override;
-      const label = configs
-        ? hasOverride ? '프로젝트 컨벤션 + CONVENTIONS.md' : '프로젝트 컨벤션 자동 감지'
-        : hasOverride ? 'CONVENTIONS.md' : '기본값';
-      return { source: 'auto', label, rules };
+      return { source: 'auto', label: `repomix (지정 파일) + CONVENTIONS.md`, rules };
     }
 
-    console.log(`\n  ${B}◆  언어 선택${R}\n`);
-    console.log(`  ${D}[1]${R} JavaScript`);
-    console.log(`  ${D}[2]${R} TypeScript\n`);
-
-    const lang = await ask(rl, `  선택 (1/2): `);
-    const langKey = lang === '2' ? 'ts' : 'js';
-    const langLabel = langKey === 'ts' ? 'TypeScript' : 'JavaScript';
-    const styles = ENTERPRISE[langKey];
-
-    console.log(`\n  ${B}◆  ${langLabel} 기업 스타일 선택${R}\n`);
-    for (const [key, val] of Object.entries(styles)) {
-      console.log(`  ${D}[${key}]${R} ${val.label}`);
+    if (choice === '4') {
+      rl.close();
+      process.stdout.write(`  ${D}▸ repomix 전체 분석 중 ...${R}`);
+      const raw = runRepomix(cwd);
+      const context = raw.slice(0, 20000);
+      process.stdout.write(`\r${' '.repeat(30)}\r`);
+      const rules = appendOverride(
+        context ? `Full project context (use these patterns as style guide):\n\n${context}` : '',
+        override,
+      );
+      return { source: 'auto', label: `repomix (전체 분석) + CONVENTIONS.md`, rules, parallel: true };
     }
-    console.log();
 
-    const styleChoice = await ask(rl, `  선택 (1~${Object.keys(styles).length}): `);
+    if (choice === '2') {
+      console.log(`\n  ${B}◆  언어 선택${R}\n`);
+      console.log(`  ${D}[1]${R} JavaScript`);
+      console.log(`  ${D}[2]${R} TypeScript\n`);
+
+      const lang = await ask(rl, `  선택 (1/2): `);
+      const langKey = lang === '2' ? 'ts' : 'js';
+      const langLabel = langKey === 'ts' ? 'TypeScript' : 'JavaScript';
+      const styles = ENTERPRISE[langKey];
+
+      console.log(`\n  ${B}◆  ${langLabel} 기업 스타일 선택${R}\n`);
+      for (const [key, val] of Object.entries(styles)) {
+        console.log(`  ${D}[${key}]${R} ${val.label}`);
+      }
+      console.log();
+
+      const styleChoice = await ask(rl, `  선택 (1~${Object.keys(styles).length}): `);
+      rl.close();
+
+      const selected = styles[styleChoice] ?? styles['1'];
+      const rules = appendOverride(selected.rules, override);
+      const label = override ? `${selected.label} + CONVENTIONS.md` : selected.label;
+      return { source: 'enterprise', label, rules };
+    }
+
+    // 1번 (기본값)
+    const configs = detectConfigFiles(cwd);
     rl.close();
+    const rules = appendOverride(
+      configs ? `Follow the project's existing code conventions below:\n\n${configs}` : '',
+      override,
+    );
+    const label = configs
+      ? override ? '프로젝트 컨벤션 + CONVENTIONS.md' : '프로젝트 컨벤션 자동 감지'
+      : override ? 'CONVENTIONS.md' : '기본값';
+    return { source: 'auto', label, rules };
 
-    const selected = styles[styleChoice] ?? styles['1'];
-    const rules = appendOverride(selected.rules, override);
-    const label = override ? `${selected.label} + CONVENTIONS.md` : selected.label;
-    return { source: 'enterprise', label, rules };
   } catch (err) {
     rl.close();
     throw err;

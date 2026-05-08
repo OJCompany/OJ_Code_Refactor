@@ -41,13 +41,16 @@ Do NOT change runtime logic — only restructure the control flow.`,
 };
 
 function validateLLMOutput(fullCode: string, originalSource: string): void {
+  if (/^\s*\|[-|]+\|/m.test(fullCode) || /\*\*[^*]+\*\*/.test(fullCode.slice(0, 200))) {
+    throw new Error('LLM이 코드 대신 마크다운 설명을 반환했습니다. 다시 시도해주세요.');
+  }
   try {
     ts.createSourceFile('validate.ts', fullCode, ts.ScriptTarget.Latest, true);
   } catch {
     throw new Error('LLM 출력이 유효한 TypeScript가 아닙니다.');
   }
   const ratio = fullCode.length / originalSource.length;
-  if (ratio < 0.5) {
+  if (ratio < 0.3) {
     throw new Error(`LLM 출력이 원본 대비 너무 짧습니다 (${Math.round(ratio * 100)}%).`);
   }
 }
@@ -86,7 +89,8 @@ function buildPrompt(
   sourceCode: string,
   locations: string,
   catalog: CatalogType,
-  conventionRules?: string
+  conventionRules?: string,
+  feedbackReason?: string
 ): string {
   const task =
     catalog === 'replace-any'
@@ -97,15 +101,24 @@ function buildPrompt(
     ? `\nCode conventions to follow:\n${conventionRules}\n`
     : '';
 
+  const feedbackSection = feedbackReason
+    ? `\nPREVIOUS ATTEMPT REJECTED — fix this issue before returning:\n${feedbackReason}\n`
+    : '';
+
   return `You are a TypeScript expert. Refactor the following file to ${task}.
 
 Strategy: ${strategy.name}
 ${strategy.instruction}
-${conventionSection}
+${conventionSection}${feedbackSection}
 Detected locations:
 ${locations}
 
-Return ONLY the complete refactored TypeScript file. Do not add any text after the last line of code — no explanations, no "Key decisions", no markdown, no "---" separator. The output must end at the closing brace of the last function.
+OUTPUT RULES (strictly enforced):
+- Return ONLY raw TypeScript code. Nothing else.
+- Do NOT write any explanation, summary, table, bullet list, or markdown.
+- Do NOT use code fences (no \`\`\`typescript or \`\`\`).
+- The very first character of your response must be the first character of the TypeScript file.
+- The very last character must be the closing brace or semicolon of the last statement.
 
 --- FILE START ---
 ${sourceCode}
@@ -141,13 +154,23 @@ async function callLLM(
   summary: string,
   beforeSnippet: string,
   catalog: CatalogType,
-  conventionRules?: string
+  conventionRules?: string,
+  feedbackReason?: string
 ): Promise<RefactoringOption> {
-  const prompt = buildPrompt(strategy, sourceCode, locations, catalog, conventionRules);
-
-  const rawText = await callClaude(prompt);
-  const fullCode = extractTypeScript(rawText);
-  validateLLMOutput(fullCode, sourceCode);
+  let fullCode = '';
+  let lastError = '';
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const prompt = buildPrompt(strategy, sourceCode, locations, catalog, conventionRules, attempt > 1 ? feedbackReason : undefined);
+    const rawText = await callClaude(prompt);
+    fullCode = extractTypeScript(rawText);
+    try {
+      validateLLMOutput(fullCode, sourceCode);
+      break;
+    } catch (err) {
+      lastError = (err as Error).message;
+      if (attempt === 3) throw new Error(lastError);
+    }
+  }
   const afterSnippet = fullCode.split('\n').slice(0, 5).join('\n');
 
   const before = measureComplexity(sourceCode);
@@ -170,7 +193,35 @@ async function callLLM(
   };
 }
 
-export async function generate(result: DetectResult, conventionRules?: string): Promise<RefactoringOption> {
+export async function validateConvention(
+  refactoredCode: string,
+  conventionRules: string
+): Promise<{ pass: boolean; reason: string }> {
+  const prompt = `You are a TypeScript code reviewer. Check if the following refactored code strictly follows the given project conventions.
+
+Conventions:
+${conventionRules.slice(0, 8000)}
+
+Refactored code:
+${refactoredCode}
+
+Reply with ONLY one of these two formats (no other text):
+PASS
+FAIL: [reason in Korean, one sentence]`;
+
+  try {
+    const raw = await callClaude(prompt);
+    const text = raw.trim();
+    if (text.startsWith('FAIL')) {
+      return { pass: false, reason: text.replace(/^FAIL:\s*/, '') };
+    }
+    return { pass: true, reason: '' };
+  } catch {
+    return { pass: true, reason: '' };
+  }
+}
+
+export async function generate(result: DetectResult, conventionRules?: string, feedbackReason?: string): Promise<RefactoringOption> {
   const locations = result.occurrences
     .map((o) => `  - line ${o.line} [${o.context}]: ${o.snippet}`)
     .join('\n');
@@ -178,10 +229,10 @@ export async function generate(result: DetectResult, conventionRules?: string): 
   const beforeSnippet = result.occurrences.slice(0, 2).map((o) => o.snippet).join('\n');
   const summary = `'any' ${result.occurrences.length}개를 ${REPLACE_ANY_STRATEGY.name} 방식으로 교체`;
 
-  return callLLM(REPLACE_ANY_STRATEGY, result.sourceCode, locations, summary, beforeSnippet, 'replace-any', conventionRules);
+  return callLLM(REPLACE_ANY_STRATEGY, result.sourceCode, locations, summary, beforeSnippet, 'replace-any', conventionRules, feedbackReason);
 }
 
-export async function generateGuardClauses(result: NestingDetectResult, conventionRules?: string): Promise<RefactoringOption> {
+export async function generateGuardClauses(result: NestingDetectResult, conventionRules?: string, feedbackReason?: string): Promise<RefactoringOption> {
   const locations = result.occurrences
     .map((o) => `  - line ${o.line} [depth ${o.depth}]: ${o.snippet}`)
     .join('\n');
@@ -189,5 +240,5 @@ export async function generateGuardClauses(result: NestingDetectResult, conventi
   const beforeSnippet = result.occurrences.slice(0, 2).map((o) => o.snippet).join('\n');
   const summary = `중첩 깊이 ${result.occurrences[0]?.depth ?? 3}짜리 조건문을 ${GUARD_CLAUSES_STRATEGY.name} 방식으로 리팩토링`;
 
-  return callLLM(GUARD_CLAUSES_STRATEGY, result.sourceCode, locations, summary, beforeSnippet, 'guard-clauses', conventionRules);
+  return callLLM(GUARD_CLAUSES_STRATEGY, result.sourceCode, locations, summary, beforeSnippet, 'guard-clauses', conventionRules, feedbackReason);
 }
