@@ -1,13 +1,13 @@
 import { diffLines } from 'diff';
 import type { RefactoringOption } from './types.js';
 
-const R  = '\x1b[0m';
-const B  = '\x1b[1m';
-const D  = '\x1b[2m';
-const R2 = '\x1b[31m';
-const G  = '\x1b[32m';
-const Y  = '\x1b[33m';
-const W  = '\x1b[97m';
+const R   = '\x1b[0m';
+const B   = '\x1b[1m';
+const D   = '\x1b[2m';
+const Y   = '\x1b[33m';
+const W   = '\x1b[97m';
+const DEL = '\x1b[1;31m'; // 굵은 빨간 텍스트
+const ADD = '\x1b[1;32m'; // 굵은 초록 텍스트
 
 type CellType = 'removed' | 'added' | 'context' | 'empty';
 type Row = [left: string, leftType: CellType, right: string, rightType: CellType];
@@ -18,7 +18,7 @@ function termWidth(): number {
 
 function delta(before: number, after: number): string {
   const d = after - before;
-  if (d < 0) return G + `↓${Math.abs(d)}` + R;
+  if (d < 0) return '\x1b[32m' + `↓${Math.abs(d)}` + R;
   if (d > 0) return Y + `↑${d}` + R;
   return D + '─' + R;
 }
@@ -87,9 +87,9 @@ function cell(text: string, type: CellType, width: number): string {
   const padded = INDENT + truncated;
 
   switch (type) {
-    case 'removed': return R2 + padded + R;
-    case 'added':   return G  + padded + R;
-    case 'context': return D  + padded + R;
+    case 'removed': return DEL + padded + R;
+    case 'added':   return ADD + padded + R;
+    case 'context': return D   + padded + R;
     case 'empty':   return ' '.repeat(width);
   }
 }
