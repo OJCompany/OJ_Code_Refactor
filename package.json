@@ -1,0 +1,24 @@
+{
+  "name": "refactor-agent",
+  "version": "0.1.0",
+  "description": "AST-based TypeScript refactoring tool with LLM-powered options",
+  "type": "module",
+  "bin": {
+    "refactor": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "node --loader ts-node/esm src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.24.0",
+    "diff": "^5.2.0",
+    "typescript": "^5.4.0"
+  },
+  "devDependencies": {
+    "@types/diff": "^5.2.1",
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.0"
+  }
+}
