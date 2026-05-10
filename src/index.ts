@@ -258,10 +258,12 @@ async function processFile(
 
   if (!autoApply) {
     const { yes } = await prompts({
-      type: 'confirm',
+      type: 'toggle',
       name: 'yes',
       message: msg.confirmApply,
       initial: true,
+      active: 'yes',
+      inactive: 'no',
     }, { onCancel: () => process.exit(0) });
 
     if (!yes) {
@@ -359,10 +361,12 @@ async function runPRMode(lang: Lang, addComments: boolean): Promise<void> {
 
   if (failed > 0 && applied.length > 0) {
     const { revert } = await prompts({
-      type: 'confirm',
+      type: 'toggle',
       name: 'revert',
       message: msg.rollbackPrompt(applied.length),
       initial: false,
+      active: 'yes',
+      inactive: 'no',
     }, { onCancel: () => process.exit(0) });
 
     if (revert) {
@@ -397,7 +401,9 @@ async function runSingleFile(filePath: string, lang: Lang, addComments: boolean)
 async function main() {
   const detectedLang = detectRepoLanguage(process.cwd());
 
-  // Language selection (default: English; Korean repos pre-select Korean)
+  // Language selection — always defaults to English (index 0)
+  // Detection result shown as hint only
+  const langHint = detectedLang === 'ko' ? '↑↓  Enter   (Korean project detected)' : '↑↓  Enter';
   const { lang } = await prompts({
     type: 'select',
     name: 'lang',
@@ -406,8 +412,8 @@ async function main() {
       { title: 'English', value: 'en' },
       { title: '한국어', value: 'ko' },
     ],
-    initial: detectedLang === 'ko' ? 1 : 0,
-    hint: 'Enter to confirm',
+    initial: 0,
+    hint: langHint,
   }, { onCancel: () => process.exit(0) }) as { lang: Lang };
 
   printBanner(lang);
@@ -415,10 +421,12 @@ async function main() {
 
   // Comment option
   const { addComments } = await prompts({
-    type: 'confirm',
+    type: 'toggle',
     name: 'addComments',
     message: msg.commentsQuestion,
     initial: false,
+    active: 'yes',
+    inactive: 'no',
   }, { onCancel: () => process.exit(0) });
 
   const args = process.argv.slice(2);
