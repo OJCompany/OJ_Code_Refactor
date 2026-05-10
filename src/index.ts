@@ -76,18 +76,29 @@ function getChangedTsFiles(): string[] {
 
 // ─── Banner + animation ───────────────────────────────────────────────────────
 
-function printBanner(lang: Lang) {
+const fg = (r: number, g: number, b: number) => `\x1b[38;2;${r};${g};${b}m`;
+const PURPLE: [number,number,number] = [125, 86, 244];
+const PINK:   [number,number,number] = [255, 100, 180];
+
+const gradient = (text: string, from: [number,number,number], to: [number,number,number]) =>
+  text.split('').map((ch, i) => {
+    const tv = text.length === 1 ? 0 : i / (text.length - 1);
+    const rv = Math.round(from[0] + (to[0] - from[0]) * tv);
+    const gv = Math.round(from[1] + (to[1] - from[1]) * tv);
+    const bv = Math.round(from[2] + (to[2] - from[2]) * tv);
+    return fg(rv, gv, bv) + ch;
+  }).join('') + R;
+
+function printBanner(lang: Lang, quokka: boolean) {
   const msg = t(lang);
   const Rb = '\x1b[0m', Bb = '\x1b[1m';
-  const fg = (r: number, g: number, b: number) => `\x1b[38;2;${r};${g};${b}m`;
-  const gradient = (text: string, from: [number,number,number], to: [number,number,number]) =>
-    text.split('').map((ch, i) => {
-      const tv = text.length === 1 ? 0 : i / (text.length - 1);
-      const rv = Math.round(from[0] + (to[0] - from[0]) * tv);
-      const gv = Math.round(from[1] + (to[1] - from[1]) * tv);
-      const bv = Math.round(from[2] + (to[2] - from[2]) * tv);
-      return fg(rv, gv, bv) + ch;
-    }).join('') + Rb;
+
+  if (!quokka) {
+    const title = Bb + gradient('OJ Refactor', PURPLE, PINK) + Rb;
+    const sub   = `${D}${msg.bannerSub}${R}`;
+    console.log(`\n  ${title}  ${sub}\n`);
+    return;
+  }
 
   const displayWidth = (s: string) => {
     const plain = s.replace(/\x1b\[[^m]*m/g, '');
@@ -108,8 +119,6 @@ function printBanner(lang: Lang) {
     return w;
   };
 
-  const PURPLE: [number,number,number] = [125, 86, 244];
-  const PINK:   [number,number,number] = [255, 100, 180];
   const AQUA:   [number,number,number] = [100, 220, 200];
   const YELLOW: [number,number,number] = [255, 210, 80];
   const TAN:    [number,number,number] = [210, 170, 100];
@@ -142,6 +151,34 @@ function printBanner(lang: Lang) {
   console.log(bar(''));
   console.log(bottom);
   console.log();
+}
+
+async function withSimpleSpinner<T>(task: Promise<T>, dots: readonly [string, string, string]): Promise<T> {
+  const DIM = '\x1b[2m', RST = '\x1b[0m';
+  let frameIdx = 0;
+  let done = false;
+
+  process.stdout.write('\n');
+  function render() {
+    process.stdout.write(`\x1b[1A\x1b[2K  ${DIM}${dots[frameIdx % dots.length]}${RST}\n`);
+    frameIdx++;
+  }
+
+  render();
+  const interval = setInterval(() => { if (!done) render(); }, 300);
+
+  try {
+    const result = await task;
+    done = true;
+    clearInterval(interval);
+    process.stdout.write('\x1b[1A\x1b[2K');
+    return result;
+  } catch (err) {
+    done = true;
+    clearInterval(interval);
+    process.stdout.write('\x1b[1A\x1b[2K');
+    throw err;
+  }
 }
 
 async function withQuokkaAnimation<T>(task: Promise<T>, dots: readonly [string, string, string]): Promise<T> {
@@ -221,6 +258,7 @@ async function processFile(
   applied: ApplyRecord[],
   lang: Lang,
   addComments: boolean,
+  quokka: boolean,
   feedbackReason?: string,
   autoApply = false
 ): Promise<'applied' | 'skipped' | 'failed'> {
@@ -241,9 +279,10 @@ async function processFile(
 
   console.log(`\n  ${B}◆  ${fname}${R}  ${D}·  ${label}${R}\n`);
 
+  const animate = quokka ? withQuokkaAnimation : withSimpleSpinner;
   let option;
   try {
-    option = await withQuokkaAnimation(
+    option = await animate(
       useNesting
         ? generateNesting(nestingResult, lang, addComments, convention.rules || undefined, feedbackReason)
         : generateTidy(anyResult, lang, addComments, convention.rules || undefined, feedbackReason),
@@ -292,7 +331,7 @@ async function processFile(
     if (!validation.pass) {
       rollback(filePath);
       console.log(`  ${Y}${msg.conventionMismatch}${R}  ${D}${validation.reason}${R}\n`);
-      return processFile(filePath, convention, applied, lang, addComments, validation.reason, autoApply);
+      return processFile(filePath, convention, applied, lang, addComments, quokka, validation.reason, autoApply);
     }
 
     const bakName = result.filePath.split('/').pop();
@@ -319,7 +358,7 @@ async function processFile(
 
 // ─── PR mode ──────────────────────────────────────────────────────────────────
 
-async function runPRMode(lang: Lang, addComments: boolean): Promise<void> {
+async function runPRMode(lang: Lang, addComments: boolean, quokka: boolean): Promise<void> {
   const msg = t(lang);
   const files = getChangedTsFiles();
 
@@ -352,7 +391,7 @@ async function runPRMode(lang: Lang, addComments: boolean): Promise<void> {
 
   for (let i = 0; i < files.length; i++) {
     console.log(`  ${D}${msg.fileProgress(i + 1, files.length, files[i])}${R}\n`);
-    const outcome = await processFile(files[i], convention, applied, lang, addComments, undefined, autoApply);
+    const outcome = await processFile(files[i], convention, applied, lang, addComments, quokka, undefined, autoApply);
     if (outcome === 'failed') failed++;
   }
 
@@ -384,13 +423,13 @@ async function runPRMode(lang: Lang, addComments: boolean): Promise<void> {
 
 // ─── Single file mode ─────────────────────────────────────────────────────────
 
-async function runSingleFile(filePath: string, lang: Lang, addComments: boolean): Promise<void> {
+async function runSingleFile(filePath: string, lang: Lang, addComments: boolean, quokka: boolean): Promise<void> {
   const msg = t(lang);
   const convention = await selectConvention(process.cwd(), lang);
   console.log(`\n  ${D}${msg.conventionLine} ${convention.label}${R}\n`);
   const applied: ApplyRecord[] = [];
   const startTime = Date.now();
-  const outcome = await processFile(filePath, convention, applied, lang, addComments);
+  const outcome = await processFile(filePath, convention, applied, lang, addComments, quokka);
   const failed = outcome === 'failed' ? 1 : 0;
   const skipped = outcome === 'skipped' ? 1 : 0;
   printSummary(lang, applied.length, skipped, failed, Date.now() - startTime);
@@ -416,7 +455,9 @@ async function main() {
     hint: langHint,
   }, { onCancel: () => process.exit(0) }) as { lang: Lang };
 
-  printBanner(lang);
+  const args = process.argv.slice(2);
+  const quokka = args.includes('--quokka');
+  printBanner(lang, quokka);
   const msg = t(lang);
 
   // Comment option
@@ -429,14 +470,13 @@ async function main() {
     inactive: 'no',
   }, { onCancel: () => process.exit(0) });
 
-  const args = process.argv.slice(2);
-  const isPR = args.includes('--pr');
+  const isPR    = args.includes('--pr');
   const filePath = args.find(a => !a.startsWith('--'));
 
   if (isPR) {
-    await runPRMode(lang, addComments as boolean);
+    await runPRMode(lang, addComments as boolean, quokka);
   } else if (filePath) {
-    await runSingleFile(filePath, lang, addComments as boolean);
+    await runSingleFile(filePath, lang, addComments as boolean, quokka);
   } else {
     console.error(msg.usage);
     process.exit(1);
