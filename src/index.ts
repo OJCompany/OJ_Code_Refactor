@@ -238,21 +238,24 @@ async function withQuokkaAnimation<T>(task: Promise<T>, dots: readonly [string, 
 
 // ─── Summary box ─────────────────────────────────────────────────────────────
 
-function printSummary(lang: Lang, applied: number, skipped: number, failed: number, elapsedMs: number) {
+function printSummary(lang: Lang, applied: ApplyRecord[], skipped: number, failed: number, elapsedMs: number) {
   const msg = t(lang);
   const SEP = `  ${D}${'─'.repeat(60)}${R}`;
   console.log(SEP);
   console.log(`  ${B}${msg.summaryHeader}${R}`);
-  console.log(`  ${G}${msg.summaryApplied(applied)}${R}`);
-  console.log(`  ${D}${msg.summarySkipped(skipped)}${R}`);
+  for (const r of applied) {
+    const fname = r.filePath.split('/').pop() ?? r.filePath;
+    console.log(`  ${G}✓${R}  ${fname.padEnd(30)}${D}${r.summary}${R}`);
+  }
+  if (applied.length === 0) console.log(`  ${D}${msg.summaryApplied(0)}${R}`);
+  console.log(`  ${D}${msg.summarySkipped(skipped)}  ·  ${msg.summaryTime(elapsedMs)}${R}`);
   if (failed > 0) console.log(`  ${R2}${msg.summaryFailed(failed)}${R}`);
-  console.log(`  ${D}${msg.summaryTime(elapsedMs)}${R}`);
   console.log();
 }
 
 // ─── Core refactoring loop ────────────────────────────────────────────────────
 
-type ApplyRecord = { filePath: string };
+type ApplyRecord = { filePath: string; summary: string };
 
 async function processFile(
   filePath: string,
@@ -359,7 +362,7 @@ async function processFile(
     console.log(`  ${G}${msg.tscPassed}${R}  ${D}·  ${msg.backup} ${bakName}.bak${R}\n`);
   }
 
-  applied.push({ filePath: result.filePath });
+  applied.push({ filePath: result.filePath, summary: option.summary });
 
   // Tidy First — 자동 커밋 제안 (작업자 A의 summary 소비)
   const commitMsg = buildCommitMessage(catalog, option.summary, filePath);
@@ -431,7 +434,7 @@ async function runPRMode(lang: Lang, addComments: boolean, quokka: boolean): Pro
   }
 
   const skippedCount = files.length - applied.length - failed;
-  printSummary(lang, applied.length, skippedCount, failed, Date.now() - startTime);
+  printSummary(lang, applied, skippedCount, failed, Date.now() - startTime);
 
   if (failed > 0 && applied.length > 0) {
     const { revert } = await prompts({
@@ -476,7 +479,7 @@ async function runSingleFile(filePath: string, lang: Lang, addComments: boolean,
   const outcome = await processFile(filePath, convention, applied, lang, addComments, quokka);
   const failed = outcome === 'failed' ? 1 : 0;
   const skipped = outcome === 'skipped' ? 1 : 0;
-  printSummary(lang, applied.length, skipped, failed, Date.now() - startTime);
+  printSummary(lang, applied, skipped, failed, Date.now() - startTime);
 }
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
