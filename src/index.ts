@@ -265,7 +265,8 @@ async function processFile(
   addComments: boolean,
   quokka: boolean,
   feedbackReason?: string,
-  autoApply = false
+  autoApply = false,
+  retryCount = 0
 ): Promise<'applied' | 'skipped' | 'failed'> {
   const msg = t(lang);
   const anyResult = detect(filePath);
@@ -340,8 +341,12 @@ async function processFile(
 
     if (!validation.pass) {
       rollback(filePath);
+      if (retryCount >= 1) {
+        console.log(`  ${R2}${msg.conventionMismatch}${R}  ${D}${msg.maxRetryReached}${R}\n`);
+        return 'failed';
+      }
       console.log(`  ${Y}${msg.conventionMismatch}${R}  ${D}${validation.reason}${R}\n`);
-      return processFile(filePath, convention, applied, lang, addComments, quokka, validation.reason, autoApply);
+      return processFile(filePath, convention, applied, lang, addComments, quokka, validation.reason, autoApply, retryCount + 1);
     }
 
     const bakName = result.filePath.split('/').pop();
