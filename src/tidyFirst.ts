@@ -1,6 +1,44 @@
 import { execSync } from 'child_process';
 import { spawn } from 'child_process';
 
+// Kent Beck "Tidy First?" — key sections embedded as LLM context
+const TIDY_FIRST_REFERENCE = `
+## Tidy First? (Kent Beck) — Reference
+
+### What counts as a STRUCTURAL tidying (tidy):
+1. Guard Clauses — replace nested ifs with early returns
+2. Dead code — delete unused code
+3. Normalize symmetries — unify inconsistent patterns
+4. New Interface, Old Implementation — wrap hard-to-use interfaces
+5. Reading Order — reorder code for readability
+6. Cohesion Order — move coupled elements together
+7. Move Declaration and Initialization Together
+8. Explaining Variables — extract subexpressions into named variables
+9. Explaining Constants — replace magic numbers/strings with named constants
+10. Explicit Parameters — make implicit params explicit
+11. Chunk Statements — add blank lines between logical sections
+12. Extract Helper — extract a block into a named helper function
+13. One Pile — merge over-split code before re-extracting
+14. Explaining Comments — add comments for non-obvious WHY
+15. Delete Redundant Comments — remove comments that restate the code
+16. Type annotations — replace 'any' with specific types (TypeScript)
+
+### What counts as BEHAVIORAL change (behavior):
+- New logic or conditions added
+- Changed return values or side effects
+- Added/removed statements that affect runtime output
+- Changed function signatures that affect callers
+
+### Section 16: Separate Tidying
+Tidying should go into their own separate PRs. Behavior and structure changes should be in separate PRs.
+
+### Section 21: First, After, Later, Never
+- FIRST: tidying will pay off immediately (improved comprehension or cheaper behavior changes), you know what to tidy and how
+- AFTER: waiting until next time will be more expensive; tidy after the behavior change
+- LATER: big batch of tidying without immediate payoff; tidy in little batches eventually
+- NEVER: you are never changing this code again, or nothing to learn by improving the design
+`.trim();
+
 export type ChangeClass = 'tidy' | 'behavior' | 'mixed' | 'unknown';
 
 export interface FileClassification {
@@ -26,7 +64,13 @@ export function classifyRefactoring(catalog: 'replace-any' | 'guard-clauses'): '
 export function whenToTidy(
   catalog: 'replace-any' | 'guard-clauses',
   issueCount: number
-): { timing: 'first' | 'after' | 'later'; rationale: string } {
+): { timing: 'first' | 'after' | 'later' | 'never'; rationale: string } {
+  if (issueCount === 0) {
+    return {
+      timing: 'never',
+      rationale: '감지된 이슈가 없습니다. 정리할 필요가 없습니다 (Section 21: Never).',
+    };
+  }
   if (catalog === 'replace-any' && issueCount >= 10) {
     return {
       timing: 'first',
@@ -39,9 +83,15 @@ export function whenToTidy(
       rationale: `중첩 깊이가 높은 조건문은 동작 변경 전 먼저 평탄화해야 수정 범위가 명확해집니다 (Section 21: First).`,
     };
   }
+  if (issueCount >= 2) {
+    return {
+      timing: 'after',
+      rationale: `동작 변경 후 별도 커밋으로 정리하는 것이 적절합니다 (Section 21: After).`,
+    };
+  }
   return {
-    timing: 'after',
-    rationale: `소규모 정리는 동작 변경 후 별도 커밋으로 분리해도 충분합니다 (Section 21: After).`,
+    timing: 'later',
+    rationale: `소규모 이슈 ${issueCount}건은 즉각적인 정리 효과가 크지 않습니다. 나중에 일괄 처리를 권장합니다 (Section 21: Later).`,
   };
 }
 
@@ -68,9 +118,11 @@ function callClaude(prompt: string): Promise<string> {
 async function classifyFileDiff(filePath: string, diff: string): Promise<FileClassification> {
   const prompt = `You are a Tidy First (Kent Beck) expert. Classify the following git diff for file "${filePath}".
 
-Tidy First definitions:
-- STRUCTURAL (tidy): type annotations, guard clauses, rename, reorder, extract helper, whitespace, comments — NO runtime behavior change
-- BEHAVIORAL (behavior): new logic, changed conditions, added/removed statements that affect runtime output
+${TIDY_FIRST_REFERENCE}
+
+Classify the diff below as one of:
+- TIDY: only structural changes from the tidying list above — NO runtime behavior change
+- BEHAVIOR: only behavioral changes (new logic, changed conditions, changed outputs)
 - MIXED: both structural and behavioral changes in the same diff
 
 Diff:
