@@ -415,6 +415,7 @@ async function runPRMode(lang: Lang, addComments: boolean, quokka: boolean): Pro
       { title: msg.autoApplyChoice.title, description: msg.autoApplyChoice.description, value: 'auto' },
       { title: msg.confirmEachChoice.title, description: msg.confirmEachChoice.description, value: 'confirm' },
     ],
+    initial: 0,
     hint: '↑↓  Enter',
   }, { onCancel: () => process.exit(0) });
 

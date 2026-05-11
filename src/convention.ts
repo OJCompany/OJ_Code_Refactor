@@ -146,6 +146,7 @@ export async function selectConvention(cwd: string, lang: Lang): Promise<Convent
       { title: msg.conventionChoices[0].title, description: msg.conventionChoices[0].description, value: 'auto' },
       { title: msg.conventionChoices[1].title, description: msg.conventionChoices[1].description, value: 'enterprise' },
     ],
+    initial: 0,
     hint: '↑↓  Enter',
   }, { onCancel: () => process.exit(0) });
 
@@ -172,6 +173,7 @@ export async function selectConvention(cwd: string, lang: Lang): Promise<Convent
       { title: 'JavaScript', value: 'js' },
       { title: 'TypeScript', value: 'ts' },
     ],
+    initial: 1,
     hint: '↑↓  Enter',
   }, { onCancel: () => process.exit(0) });
 
@@ -183,6 +185,7 @@ export async function selectConvention(cwd: string, lang: Lang): Promise<Convent
     name: 'styleIdx',
     message: msg.styleHeader(langLabel),
     choices: styles.map((s, i) => ({ title: s.label, value: i })),
+    initial: 0,
     hint: '↑↓  Enter',
   }, { onCancel: () => process.exit(0) });
 
