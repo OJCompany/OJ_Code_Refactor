@@ -8,6 +8,8 @@ import { generate as generateTidy, generateGuardClauses as generateTidyNesting, 
 import { apply, rollback } from './apply.js';
 import { formatSingle } from './format.js';
 import { selectConvention, type ConventionContext } from './convention.js';
+import { whenToTidy, analyzePRReadiness } from './tidyFirst.js';
+import { buildCommitMessage, commitRefactoring } from './commitMessage.js';
 
 const D = '\x1b[2m', B = '\x1b[1m', G = '\x1b[32m', R2 = '\x1b[31m', Y = '\x1b[33m', R = '\x1b[0m';
 
@@ -222,8 +224,13 @@ async function processFile(
   const label = useNesting ? `중첩 조건문 ${count}건` : `any 타입 ${count}건`;
   const fname = filePath.split('/').pop();
   const originalSource = useNesting ? nestingResult.sourceCode : anyResult.sourceCode;
+  const catalog = useNesting ? 'guard-clauses' : 'replace-any';
 
-  console.log(`\n  ${B}◆  ${fname}${R}  ${D}·  ${label}${R}\n`);
+  const { timing, rationale } = whenToTidy(catalog, count);
+  const timingColor = timing === 'first' ? Y : D;
+
+  console.log(`\n  ${B}◆  ${fname}${R}  ${D}·  ${label}${R}`);
+  console.log(`  ${timingColor}Tidy ${timing.toUpperCase()}${R}  ${D}${rationale}${R}\n`);
 
   let option;
   try {
@@ -295,6 +302,25 @@ async function processFile(
   }
 
   applied.push({ filePath: result.filePath });
+
+  // Tidy First — 자동 커밋 제안 (작업자 A의 summary 소비)
+  const commitMsg = buildCommitMessage(catalog, option.summary, filePath);
+  console.log(`  ${D}Tidy First 커밋 메시지:${R}  ${commitMsg}`);
+  const { doCommit } = await prompts({
+    type: 'confirm',
+    name: 'doCommit',
+    message: '이 메시지로 자동 커밋할까요?',
+    initial: false,
+  }, { onCancel: () => process.exit(0) });
+
+  if (doCommit) {
+    const ok = commitRefactoring(filePath, commitMsg);
+    console.log(ok
+      ? `  ${G}✓  커밋 완료${R}\n`
+      : `  ${R2}✗  커밋 실패 — 수동으로 커밋해주세요${R}\n`
+    );
+  }
+
   return 'applied';
 }
 
@@ -310,6 +336,14 @@ async function runPRMode(): Promise<void> {
 
   console.log(`\n  ${B}◆  PR 모드${R}  ${D}·  변경 파일 ${files.length}개${R}\n`);
   files.forEach((f, i) => console.log(`  ${D}${i + 1}.${R} ${f}`));
+
+  // Tidy First — uncommitted 변경사항 사전 검사 (Section 16: Separate Tidying)
+  process.stdout.write(`\n  ${D}▸ Tidy First 사전 검사 중 ...${R}`);
+  const readiness = await analyzePRReadiness(process.cwd());
+  process.stdout.write(`\r${' '.repeat(40)}\r`);
+  if (!readiness.clean && readiness.recommendation) {
+    console.log(`  ${Y}⚠  ${readiness.recommendation}${R}\n`);
+  }
 
   const convention = await selectConvention(process.cwd());
   console.log(`\n  ${D}컨벤션: ${convention.label}${R}\n`);
