@@ -459,6 +459,15 @@ async function runPRMode(lang: Lang, addComments: boolean, quokka: boolean): Pro
 
 async function runSingleFile(filePath: string, lang: Lang, addComments: boolean, quokka: boolean): Promise<void> {
   const msg = t(lang);
+
+  // Tidy First — uncommitted 변경사항 사전 검사 (Section 16: Separate Tidying)
+  process.stdout.write(`\n  ${D}▸ Tidy First 사전 검사 중 ...${R}`);
+  const readiness = await analyzePRReadiness(process.cwd());
+  process.stdout.write(`\r${' '.repeat(40)}\r`);
+  if (!readiness.clean && readiness.recommendation) {
+    console.log(`  ${Y}⚠  ${readiness.recommendation}${R}\n`);
+  }
+
   const convention = await selectConvention(process.cwd(), lang);
   console.log(`\n  ${D}${msg.conventionLine} ${convention.label}${R}\n`);
   const applied: ApplyRecord[] = [];
