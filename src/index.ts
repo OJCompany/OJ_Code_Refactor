@@ -369,22 +369,26 @@ async function processFile(
 
   applied.push({ filePath: result.filePath, summary: option.summary });
 
-  // Tidy First — 자동 커밋 제안 (작업자 A의 summary 소비)
   const commitMsg = buildCommitMessage(catalog, option.summary, filePath);
-  console.log(`  ${D}Tidy First 커밋 메시지:${R}  ${commitMsg}`);
-  const { doCommit } = await prompts({
-    type: 'confirm',
-    name: 'doCommit',
-    message: '이 메시지로 자동 커밋할까요?',
-    initial: false,
-  }, { onCancel: () => process.exit(0) });
+  console.log(`  ${D}${msg.commitMsgLabel}${R}  ${commitMsg}`);
 
-  if (doCommit) {
-    const ok = commitRefactoring(filePath, commitMsg);
-    console.log(ok
-      ? `  ${G}✓  커밋 완료${R}\n`
-      : `  ${R2}✗  커밋 실패 — 수동으로 커밋해주세요${R}\n`
-    );
+  if (!autoApply) {
+    const { doCommit } = await prompts({
+      type: 'toggle',
+      name: 'doCommit',
+      message: msg.commitQuestion,
+      initial: false,
+      active: 'yes',
+      inactive: 'no',
+    }, { onCancel: () => process.exit(0) });
+
+    if (doCommit) {
+      const ok = commitRefactoring(filePath, commitMsg);
+      console.log(ok
+        ? `  ${G}${msg.commitDone}${R}\n`
+        : `  ${R2}${msg.commitFailed}${R}\n`
+      );
+    }
   }
 
   return 'applied';
@@ -405,7 +409,7 @@ async function runPRMode(lang: Lang, addComments: boolean, quokka: boolean): Pro
   files.forEach((f, i) => console.log(`  ${D}${i + 1}.${R} ${f}`));
 
   // Tidy First — uncommitted 변경사항 사전 검사 (Section 16: Separate Tidying)
-  process.stdout.write(`\n  ${D}▸ Tidy First 사전 검사 중 ...${R}`);
+  process.stdout.write(`\n  ${D}${msg.tidyFirstChecking}${R}`);
   const readiness = await analyzePRReadiness(process.cwd());
   process.stdout.write(`\r${' '.repeat(40)}\r`);
   if (!readiness.clean && readiness.recommendation) {
@@ -470,7 +474,7 @@ async function runSingleFile(filePath: string, lang: Lang, addComments: boolean,
   const msg = t(lang);
 
   // Tidy First — uncommitted 변경사항 사전 검사 (Section 16: Separate Tidying)
-  process.stdout.write(`\n  ${D}▸ Tidy First 사전 검사 중 ...${R}`);
+  process.stdout.write(`\n  ${D}${msg.tidyFirstChecking}${R}`);
   const readiness = await analyzePRReadiness(process.cwd());
   process.stdout.write(`\r${' '.repeat(40)}\r`);
   if (!readiness.clean && readiness.recommendation) {

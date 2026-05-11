@@ -89,6 +89,11 @@ export interface Messages {
   nestingSummary: (depth: number, strategy: string) => string;
   validationReplyFormat: string;
   maxRetryReached: string;
+  tidyFirstChecking: string;
+  commitMsgLabel: string;
+  commitQuestion: string;
+  commitDone: string;
+  commitFailed: string;
   // convention
   conventionHeader: string;
   conventionChoices: readonly [{ title: string; description: string }, { title: string; description: string }];
@@ -148,6 +153,11 @@ const en: Messages = {
   nestingSummary: (depth, s) => `Refactor nesting depth ${depth} using ${s}`,
   validationReplyFormat: 'Reply with ONLY one of these two formats (no other text):\nPASS\nFAIL: [reason in one sentence]',
   maxRetryReached: 'Convention check failed after 1 retry — skipping file.',
+  tidyFirstChecking: '▸  Tidy First check ...',
+  commitMsgLabel: 'Tidy First commit message:',
+  commitQuestion: 'Auto-commit with this message?',
+  commitDone: '✓  Committed',
+  commitFailed: '✗  Commit failed — please commit manually',
   conventionHeader: '◆  Code Convention',
   conventionChoices: [
     { title: 'Auto-detect project conventions', description: 'Reads .eslintrc, tsconfig, and other config files' },
@@ -209,6 +219,11 @@ const ko: Messages = {
   nestingSummary: (depth, s) => `중첩 깊이 ${depth}짜리 조건문을 ${s} 방식으로 리팩토링`,
   validationReplyFormat: 'Reply with ONLY one of these two formats (no other text):\nPASS\nFAIL: [reason in Korean, one sentence]',
   maxRetryReached: '컨벤션 재시도 1회 실패 — 파일 건너뜀.',
+  tidyFirstChecking: '▸  Tidy First 사전 검사 중 ...',
+  commitMsgLabel: 'Tidy First 커밋 메시지:',
+  commitQuestion: '이 메시지로 자동 커밋할까요?',
+  commitDone: '✓  커밋 완료',
+  commitFailed: '✗  커밋 실패 — 수동으로 커밋해주세요',
   conventionHeader: '◆  코드 컨벤션 설정',
   conventionChoices: [
     { title: '프로젝트 컨벤션 자동 감지', description: '.eslintrc, tsconfig 등 읽기' },
