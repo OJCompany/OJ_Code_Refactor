@@ -3,6 +3,8 @@ import { spawn } from 'child_process';
 import type { DetectResult, RefactoringOption } from './types.js';
 import type { NestingDetectResult } from './detectNesting.js';
 import { measureComplexity } from './metrics.js';
+import type { Lang } from './i18n.js';
+import { t } from './i18n.js';
 
 type CatalogType = 'replace-any' | 'guard-clauses';
 
@@ -13,11 +15,13 @@ interface Strategy {
   instruction: string;
 }
 
-const REPLACE_ANY_STRATEGY: Strategy = {
-  id: 1,
-  name: 'Tidy 리팩토링',
-  tradeoff: '기존 로직 유지. 최소 변경으로 any를 가장 구체적인 타입으로 교체.',
-  instruction: `You are a TypeScript expert performing a minimal "tidy refactoring".
+function makeStrategies(lang: Lang) {
+  const msg = t(lang);
+  const REPLACE_ANY: Strategy = {
+    id: 1,
+    name: msg.tidyName,
+    tradeoff: msg.tidyTradeoff,
+    instruction: `You are a TypeScript expert performing a minimal "tidy refactoring".
 Goal: eliminate every 'any' with the most specific type that fits actual usage.
 
 Rules (follow strictly):
@@ -28,30 +32,33 @@ Rules (follow strictly):
 5. Keep the diff as small as possible — change ONLY type annotations.
 6. NEVER add or remove runtime expressions: no ??, ?., ||, &&, ternaries, or any other logic that wasn't in the original.
 7. If a type mismatch requires a workaround, use a type assertion (e.g. value as string) — never add null-handling logic.`,
-};
+  };
 
-const GUARD_CLAUSES_STRATEGY: Strategy = {
-  id: 1,
-  name: 'Guard Clauses (조기 반환)',
-  tradeoff: '중첩 제거로 가독성 대폭 향상. 단, 반환 포인트가 늘어남.',
-  instruction: `Refactor deeply nested if statements using guard clauses (early return pattern).
+  const GUARD_CLAUSES: Strategy = {
+    id: 1,
+    name: msg.guardName,
+    tradeoff: msg.guardTradeoff,
+    instruction: `Refactor deeply nested if statements using guard clauses (early return pattern).
 Move all precondition checks to the top of the function as early returns.
 The happy path should be at the lowest indentation level.
 Do NOT change runtime logic — only restructure the control flow.`,
-};
+  };
+
+  return { REPLACE_ANY, GUARD_CLAUSES };
+}
 
 function validateLLMOutput(fullCode: string, originalSource: string): void {
   if (/^\s*\|[-|]+\|/m.test(fullCode) || /\*\*[^*]+\*\*/.test(fullCode.slice(0, 200))) {
-    throw new Error('LLM이 코드 대신 마크다운 설명을 반환했습니다. 다시 시도해주세요.');
+    throw new Error('LLM returned markdown instead of code. Please retry.');
   }
   try {
     ts.createSourceFile('validate.ts', fullCode, ts.ScriptTarget.Latest, true);
   } catch {
-    throw new Error('LLM 출력이 유효한 TypeScript가 아닙니다.');
+    throw new Error('LLM output is not valid TypeScript.');
   }
   const ratio = fullCode.length / originalSource.length;
   if (ratio < 0.3) {
-    throw new Error(`LLM 출력이 원본 대비 너무 짧습니다 (${Math.round(ratio * 100)}%).`);
+    throw new Error(`LLM output is too short relative to the original (${Math.round(ratio * 100)}%).`);
   }
 }
 
@@ -59,7 +66,6 @@ function extractTypeScript(text: string): string {
   const fenced = text.match(/```(?:typescript|ts)?\n([\s\S]*?)\n?```/);
   if (fenced) return fenced[1].trim();
 
-  // --- 구분선이 텍스트 후반부에 있을 때만 trailing 설명으로 간주하고 잘라냄
   const separatorMatch = text.search(/\n---+\n/);
   if (separatorMatch !== -1 && separatorMatch > text.length / 2) {
     text = text.substring(0, separatorMatch);
@@ -67,7 +73,6 @@ function extractTypeScript(text: string): string {
 
   const lines = text.split('\n');
   const tsStart = /^(import |export |interface |type |function |class |const |let |var |async |\/\/|\/\*)/;
-  // 마크다운 확정 패턴: 헤더, 볼드, 테이블, 수평선, 불릿 리스트 (- 또는 *)
   const nonTs = /^(\*\*|#{1,6} |\||-{3,}|[-*] )/;
 
   let start = 0;
@@ -77,8 +82,8 @@ function extractTypeScript(text: string): string {
 
   let end = lines.length;
   for (let i = lines.length - 1; i >= start; i--) {
-    const t = lines[i].trim();
-    if (t && !nonTs.test(t)) { end = i + 1; break; }
+    const tr = lines[i].trim();
+    if (tr && !nonTs.test(tr)) { end = i + 1; break; }
   }
 
   return lines.slice(start, end).join('\n').trim();
@@ -89,6 +94,7 @@ function buildPrompt(
   sourceCode: string,
   locations: string,
   catalog: CatalogType,
+  addComments: boolean,
   conventionRules?: string,
   feedbackReason?: string
 ): string {
@@ -105,11 +111,15 @@ function buildPrompt(
     ? `\nPREVIOUS ATTEMPT REJECTED — fix this issue before returning:\n${feedbackReason}\n`
     : '';
 
+  const commentSection = addComments
+    ? '\nFor each line you change, add a concise inline comment (// ...) explaining WHY the change was made.\n'
+    : '';
+
   return `You are a TypeScript expert. Refactor the following file to ${task}.
 
 Strategy: ${strategy.name}
 ${strategy.instruction}
-${conventionSection}${feedbackSection}
+${conventionSection}${feedbackSection}${commentSection}
 Detected locations:
 ${locations}
 
@@ -137,7 +147,7 @@ function callClaude(prompt: string): Promise<string> {
     proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
     proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
     proc.on('close', (code) => {
-      if (code !== 0) reject(new Error(stderr.trim() || `claude 종료 코드: ${code}`));
+      if (code !== 0) reject(new Error(stderr.trim() || `claude exit code: ${code}`));
       else resolve(stdout.trim());
     });
     proc.on('error', reject);
@@ -154,13 +164,17 @@ async function callLLM(
   summary: string,
   beforeSnippet: string,
   catalog: CatalogType,
+  addComments: boolean,
   conventionRules?: string,
   feedbackReason?: string
 ): Promise<RefactoringOption> {
   let fullCode = '';
   let lastError = '';
   for (let attempt = 1; attempt <= 3; attempt++) {
-    const prompt = buildPrompt(strategy, sourceCode, locations, catalog, conventionRules, attempt > 1 ? feedbackReason : undefined);
+    const prompt = buildPrompt(
+      strategy, sourceCode, locations, catalog, addComments,
+      conventionRules, attempt > 1 ? feedbackReason : undefined
+    );
     const rawText = await callClaude(prompt);
     fullCode = extractTypeScript(rawText);
     try {
@@ -195,8 +209,10 @@ async function callLLM(
 
 export async function validateConvention(
   refactoredCode: string,
-  conventionRules: string
+  conventionRules: string,
+  lang: Lang = 'en'
 ): Promise<{ pass: boolean; reason: string }> {
+  const msg = t(lang);
   const prompt = `You are a TypeScript code reviewer. Check if the following refactored code strictly follows the given project conventions.
 
 Conventions:
@@ -205,9 +221,7 @@ ${conventionRules.slice(0, 8000)}
 Refactored code:
 ${refactoredCode}
 
-Reply with ONLY one of these two formats (no other text):
-PASS
-FAIL: [reason in Korean, one sentence]`;
+${msg.validationReplyFormat}`;
 
   try {
     const raw = await callClaude(prompt);
@@ -221,24 +235,41 @@ FAIL: [reason in Korean, one sentence]`;
   }
 }
 
-export async function generate(result: DetectResult, conventionRules?: string, feedbackReason?: string): Promise<RefactoringOption> {
+export async function generate(
+  result: DetectResult,
+  lang: Lang = 'en',
+  addComments = false,
+  conventionRules?: string,
+  feedbackReason?: string
+): Promise<RefactoringOption> {
+  const { REPLACE_ANY } = makeStrategies(lang);
+  const msg = t(lang);
+
   const locations = result.occurrences
     .map((o) => `  - line ${o.line} [${o.context}]: ${o.snippet}`)
     .join('\n');
-
   const beforeSnippet = result.occurrences.slice(0, 2).map((o) => o.snippet).join('\n');
-  const summary = `'any' ${result.occurrences.length}개를 ${REPLACE_ANY_STRATEGY.name} 방식으로 교체`;
+  const summary = msg.anySummary(result.occurrences.length, REPLACE_ANY.name);
 
-  return callLLM(REPLACE_ANY_STRATEGY, result.sourceCode, locations, summary, beforeSnippet, 'replace-any', conventionRules, feedbackReason);
+  return callLLM(REPLACE_ANY, result.sourceCode, locations, summary, beforeSnippet, 'replace-any', addComments, conventionRules, feedbackReason);
 }
 
-export async function generateGuardClauses(result: NestingDetectResult, conventionRules?: string, feedbackReason?: string): Promise<RefactoringOption> {
+export async function generateGuardClauses(
+  result: NestingDetectResult,
+  lang: Lang = 'en',
+  addComments = false,
+  conventionRules?: string,
+  feedbackReason?: string
+): Promise<RefactoringOption> {
+  const { GUARD_CLAUSES } = makeStrategies(lang);
+  const msg = t(lang);
+
   const locations = result.occurrences
     .map((o) => `  - line ${o.line} [depth ${o.depth}]: ${o.snippet}`)
     .join('\n');
-
   const beforeSnippet = result.occurrences.slice(0, 2).map((o) => o.snippet).join('\n');
-  const summary = `중첩 깊이 ${result.occurrences[0]?.depth ?? 3}짜리 조건문을 ${GUARD_CLAUSES_STRATEGY.name} 방식으로 리팩토링`;
+  const depth = result.occurrences[0]?.depth ?? 3;
+  const summary = msg.nestingSummary(depth, GUARD_CLAUSES.name);
 
-  return callLLM(GUARD_CLAUSES_STRATEGY, result.sourceCode, locations, summary, beforeSnippet, 'guard-clauses', conventionRules, feedbackReason);
+  return callLLM(GUARD_CLAUSES, result.sourceCode, locations, summary, beforeSnippet, 'guard-clauses', addComments, conventionRules, feedbackReason);
 }
